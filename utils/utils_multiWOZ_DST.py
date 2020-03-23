@@ -14,7 +14,6 @@ from utils.config import *
 import ast
 from collections import Counter
 from collections import OrderedDict
-from embeddings import GloveEmbedding, KazumaCharEmbedding
 from tqdm import tqdm
 import os
 import pickle
@@ -59,7 +58,7 @@ class Lang:
 
 class Dataset(data.Dataset):
     """Custom data.Dataset compatible with data.DataLoader."""
-    def __init__(self, data_info, src_word2id, trg_word2id, sequicity, mem_word2id):
+    def __init__(self, data_info, src_word2id, trg_word2id, mem_word2id):
         """Reads source and target sequences from txt files."""
         self.ID = data_info['ID']
         self.turn_domain = data_info['turn_domain']
@@ -69,7 +68,6 @@ class Dataset(data.Dataset):
         self.gating_label = data_info['gating_label']
         self.turn_uttr = data_info['turn_uttr']
         self.generate_y = data_info["generate_y"]
-        self.sequicity = sequicity
         self.num_total_seqs = len(self.dialog_history)
         self.src_word2id = src_word2id
         self.trg_word2id = trg_word2id
@@ -209,7 +207,7 @@ def collate_fn(data):
     item_info["y_lengths"] = y_lengths
     return item_info
 
-def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity, training, max_line = None):
+def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, training, max_line = None):
     print(("Reading from {}".format(file_name)))
     data = []
     max_resp_len, max_value_len = 0, 0
@@ -222,11 +220,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                 for ti, turn in enumerate(dial_dict["dialogue"]):
                     lang.index_words(turn["system_transcript"], 'utter')
                     lang.index_words(turn["transcript"], 'utter')
-        # determine training data ratio, default is 100%
-        if training and dataset=="train" and args["data_ratio"]!=100:
-            random.Random(10).shuffle(dials)
-            dials = dials[:int(len(dials)*0.01*args["data_ratio"])]
-        
+
         cnt_lin = 1
         for dial_dict in dials:
             dialog_history = ""
@@ -238,13 +232,6 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                 if domain not in domain_counter.keys():
                     domain_counter[domain] = 0
                 domain_counter[domain] += 1
-
-            # Unseen domain setting
-            if args["only_domain"] != "" and args["only_domain"] not in dial_dict["domains"]:
-                continue
-            if (args["except_domain"] != "" and dataset == "test" and args["except_domain"] not in dial_dict["domains"]) or \
-               (args["except_domain"] != "" and dataset != "test" and [args["except_domain"]] == dial_dict["domains"]): 
-                continue
 
             # Reading data
             for ti, turn in enumerate(dial_dict["dialogue"]):
@@ -327,11 +314,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
     return data, max_resp_len, slot_temp
 
 
-def get_seq(pairs, lang, mem_lang, batch_size, type, sequicity):  
-    if(type and args['fisher_sample']>0):
-        shuffle(pairs)
-        pairs = pairs[:args['fisher_sample']]
-
+def get_seq(pairs, lang, mem_lang, batch_size, shuffle):
     data_info = {}
     data_keys = pairs[0].keys()
     for k in data_keys:
@@ -341,34 +324,12 @@ def get_seq(pairs, lang, mem_lang, batch_size, type, sequicity):
         for k in data_keys:
             data_info[k].append(pair[k]) 
 
-    dataset = Dataset(data_info, lang.word2index, lang.word2index, sequicity, mem_lang.word2index)
-
-    if args["imbalance_sampler"] and type:
-        data_loader = torch.utils.data.DataLoader(dataset=dataset,
+    dataset = Dataset(data_info, lang.word2index, lang.word2index, mem_lang.word2index)
+    data_loader = torch.utils.data.DataLoader(dataset=dataset,
                                                   batch_size=batch_size,
-                                                  # shuffle=type,
-                                                  collate_fn=collate_fn,
-                                                  sampler=ImbalancedDatasetSampler(dataset))
-    else:
-        data_loader = torch.utils.data.DataLoader(dataset=dataset,
-                                                  batch_size=batch_size,
-                                                  shuffle=type,
+                                                  shuffle=shuffle,
                                                   collate_fn=collate_fn)
     return data_loader
-
-
-def dump_pretrained_emb(word2index, index2word, dump_path):
-    print("Dumping pretrained embeddings...")
-    embeddings = [GloveEmbedding(), KazumaCharEmbedding()]
-    E = []
-    for i in tqdm(range(len(word2index.keys()))):
-        w = index2word[i]
-        e = []
-        for emb in embeddings:
-            e += emb.emb(w, default='zero')
-        E.append(e)
-    with open(dump_path, 'wt') as f:
-        json.dump(E, f)
 
 
 def get_slot_information(ontology):
@@ -377,7 +338,7 @@ def get_slot_information(ontology):
     return SLOTS
 
 
-def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
+def prepare_data_seq(training, batch_size=100):
     eval_batch = args["eval_batch"] if args["eval_batch"] else batch_size
     file_train = 'data/train_dials.json'
     file_dev = 'data/dev_dials.json'
@@ -402,13 +363,13 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
     mem_lang_name = 'mem-lang-all.pkl' if args["all_vocab"] else 'mem-lang-train.pkl'
 
     if training:
-        pair_train, train_max_len, slot_train = read_langs(file_train, gating_dict, ALL_SLOTS, "train", lang, mem_lang, sequicity, training)
-        train = get_seq(pair_train, lang, mem_lang, batch_size, True, sequicity)
+        pair_train, train_max_len, slot_train = read_langs(file_train, gating_dict, ALL_SLOTS, "train", lang, mem_lang, training)
+        train = get_seq(pair_train, lang, mem_lang, batch_size, True)
         nb_train_vocab = lang.n_words
-        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training)
-        dev   = get_seq(pair_dev, lang, mem_lang, eval_batch, False, sequicity)
-        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, sequicity, training)
-        test  = get_seq(pair_test, lang, mem_lang, eval_batch, False, sequicity)
+        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang,training)
+        dev   = get_seq(pair_dev, lang, mem_lang, eval_batch, False)
+        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, training)
+        test  = get_seq(pair_test, lang, mem_lang, eval_batch, False)
         if os.path.exists(folder_name+lang_name) and os.path.exists(folder_name+mem_lang_name):
             print("[Info] Loading saved lang files...")
             with open(folder_name+lang_name, 'rb') as handle: 
@@ -421,9 +382,6 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
                 pickle.dump(lang, handle)
             with open(folder_name+mem_lang_name, 'wb') as handle: 
                 pickle.dump(mem_lang, handle)
-        emb_dump_path = 'data/emb{}.json'.format(len(lang.index2word))
-        if not os.path.exists(emb_dump_path) and args["load_embedding"]:
-            dump_pretrained_emb(lang.word2index, lang.index2word, emb_dump_path)
     else:
         with open(folder_name+lang_name, 'rb') as handle:
             lang = pickle.load(handle)
@@ -431,15 +389,11 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
             mem_lang = pickle.load(handle)
 
         pair_train, train_max_len, slot_train, train, nb_train_vocab = [], 0, {}, [], 0
-        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training)
-        dev   = get_seq(pair_dev, lang, mem_lang, eval_batch, False, sequicity)
-        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, sequicity, training)
-        test  = get_seq(pair_test, lang, mem_lang, eval_batch, False, sequicity)
+        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang,training)
+        dev   = get_seq(pair_dev, lang, mem_lang, eval_batch, False)
+        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, training)
+        test  = get_seq(pair_test, lang, mem_lang, eval_batch, False)
 
-    test_4d = []
-    if args['except_domain']!="":
-        pair_test_4d, _, _ = read_langs(file_test, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training)
-        test_4d  = get_seq(pair_test_4d, lang, mem_lang, eval_batch, False, sequicity)
 
     max_word = max(train_max_len, dev_max_len, test_max_len) + 1
 
@@ -458,47 +412,4 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
     print("[Test Set Slots]: Number is {} in total".format(str(len(SLOTS_LIST[3]))))
     print(SLOTS_LIST[3])
     LANG = [lang, mem_lang]
-    return train, dev, test, test_4d, LANG, SLOTS_LIST, gating_dict, nb_train_vocab
-
-
-
-class ImbalancedDatasetSampler(torch.utils.data.sampler.Sampler):
-    """Samples elements randomly from a given list of indices for imbalanced dataset
-    Arguments:
-        indices (list, optional): a list of indices
-        num_samples (int, optional): number of samples to draw
-    """
-
-    def __init__(self, dataset, indices=None, num_samples=None):
-                
-        # if indices is not provided, 
-        # all elements in the dataset will be considered
-        self.indices = list(range(len(dataset))) \
-            if indices is None else indices
-            
-        # if num_samples is not provided, 
-        # draw `len(indices)` samples in each iteration
-        self.num_samples = len(self.indices) \
-            if num_samples is None else num_samples
-            
-        # distribution of classes in the dataset 
-        label_to_count = {}
-        for idx in self.indices:
-            label = self._get_label(dataset, idx)
-            if label in label_to_count:
-                label_to_count[label] += 1
-            else:
-                label_to_count[label] = 1
-                
-        # weight for each sample
-        weights = [1.0 / label_to_count[self._get_label(dataset, idx)] for idx in self.indices]
-        self.weights = torch.DoubleTensor(weights)
-
-    def _get_label(self, dataset, idx):
-        return dataset.turn_domain[idx]
-                
-    def __iter__(self):
-        return (self.indices[i] for i in torch.multinomial(self.weights, self.num_samples, replacement=True))
-
-    def __len__(self):
-        return self.num_samples
+    return train, dev, test, LANG, SLOTS_LIST, gating_dict, nb_train_vocab
