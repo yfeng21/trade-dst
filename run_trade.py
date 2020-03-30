@@ -12,9 +12,14 @@ def parse_argument():
     parser.add_argument('--epoch',default=10,type=int)
     parser.add_argument('--drop_rate', type=float)
     parser.add_argument('--hidden_size', type=int, default=400)
-    parser.add_argument('--batch_size',default=64,type=int)
-    parser.add_argument('--lr',default=0.1,type=float)
+    # parser.add_argument('--batch_size',default=64,type=int)
+    parser.add_argument('--lr',default=0.001,type=float)
     parser.add_argument('--save_path')
+
+    parser.add_argument('--all_vocab', type=bool, default=True)
+    parser.add_argument('--train_batch_size', type=int, default=32)
+    parser.add_argument('--eval_batch_size', type=int, default=64)
+    parser.add_argument('--cache_path', type=str, default='./cache')
     return parser.parse_args()
 
 
@@ -23,8 +28,8 @@ def start_train(args, model, train, dev, slot_train, slot_dev):
     for it in range(args.epoch):
         progress_bar = tqdm(enumerate(train),total=len(train))
         for i,d in progress_bar:
-            model.train_batch(data, 1, slot_train, reset=(i==0))
-            model.optimize(1)
+            model.train_batch(d, 1, slot_train, reset=(i==0))
+            # model.optimize(1.0)
             progress_bar.set_description(model.print_loss())
 
         if ((it+1) % 10) == 0:
@@ -41,17 +46,18 @@ def start_test(model, test, slot_test):
 
 def main():
     args = parse_argument()
-    train, dev, test, lang, SLOTS_LIST, gating_dict, max_word = prepare_data_seq(args.train, train_batch_size=args.batch_size)
-    model = globals()["TRADE"](
-        hidden_size=args.hidden_size,
-        lang=lang,
-        path=args.save_path,
-        task="dst",
-        lr=args.lr if args.train else 0,
-        dropout=args.drop_rate if args.train else 0,
-        slots=SLOTS_LIST,
-        gating_dict=gating_dict,
-        nb_train_vocab=max_word)
+    train, dev, test, lang, SLOTS_LIST, gating_dict, max_word = prepare_data_seq(args)
+    model = TRADE(
+        args.hidden_size,
+        lang,
+        args.save_path,
+        "dst",
+        args.lr if args.train else 0,
+        args.drop_rate if args.train else 0,
+        SLOTS_LIST,
+        gating_dict,
+        emb_path=args.embedding
+    )
     if args.train:
         start_train(args, model, train, dev, SLOTS_LIST[1], SLOTS_LIST[2])
     else:

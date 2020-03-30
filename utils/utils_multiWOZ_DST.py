@@ -207,7 +207,7 @@ def collate_fn(data):
     item_info["y_lengths"] = y_lengths
     return item_info
 
-def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, training, max_line = None):
+def read_langs(args: argparse.Namespace, file_name, gating_dict, SLOTS, dataset, lang, mem_lang, training, max_line = None):
     print(("Reading from {}".format(file_name)))
     data = []
     max_resp_len, max_value_len = 0, 0
@@ -216,7 +216,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, training,
         dials = json.load(f)
         # create vocab first 
         for dial_dict in dials:
-            if (args["all_vocab"] or dataset=="train") and training:
+            if (args.all_vocab or dataset=="train") and training:
                 for ti, turn in enumerate(dial_dict["dialogue"]):
                     lang.index_words(turn["system_transcript"], 'utter')
                     lang.index_words(turn["transcript"], 'utter')
@@ -245,24 +245,24 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, training,
 
                 # Generate domain-dependent slot list
                 slot_temp = SLOTS
-                if dataset == "train" or dataset == "dev":
-                    if args["except_domain"] != "":
-                        slot_temp = [k for k in SLOTS if args["except_domain"] not in k]
-                        turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["except_domain"] not in k])
-                    elif args["only_domain"] != "":
-                        slot_temp = [k for k in SLOTS if args["only_domain"] in k]
-                        turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["only_domain"] in k])
-                else:
-                    if args["except_domain"] != "":
-                        slot_temp = [k for k in SLOTS if args["except_domain"] in k]
-                        turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["except_domain"] in k])
-                    elif args["only_domain"] != "":
-                        slot_temp = [k for k in SLOTS if args["only_domain"] in k]
-                        turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["only_domain"] in k])
+                # if dataset == "train" or dataset == "dev":
+                #     if args["except_domain"] != "":
+                #         slot_temp = [k for k in SLOTS if args["except_domain"] not in k]
+                #         turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["except_domain"] not in k])
+                #     elif args["only_domain"] != "":
+                #         slot_temp = [k for k in SLOTS if args["only_domain"] in k]
+                #         turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["only_domain"] in k])
+                # else:
+                #     if args["except_domain"] != "":
+                #         slot_temp = [k for k in SLOTS if args["except_domain"] in k]
+                #         turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["except_domain"] in k])
+                #     elif args["only_domain"] != "":
+                #         slot_temp = [k for k in SLOTS if args["only_domain"] in k]
+                #         turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["only_domain"] in k])
 
                 turn_belief_list = [str(k)+'-'+str(v) for k, v in turn_belief_dict.items()]
 
-                if (args["all_vocab"] or dataset=="train") and training:
+                if (args.all_vocab or dataset=="train") and training:
                     mem_lang.index_words(turn_belief_dict, 'belief')
 
                 class_label, generate_y, slot_mask, gating_label  = [], [], [], []
@@ -338,19 +338,18 @@ def get_slot_information(ontology):
     return SLOTS
 
 
-def prepare_data_seq(training, batch_size=100):
-    eval_batch = args["eval_batch"] if args["eval_batch"] else batch_size
+def prepare_data_seq(args):
+    training = args.train
+    train_batch_size = args.train_batch_size
+    eval_batch_size = args.eval_batch_size
     file_train = 'data/train_dials.json'
     file_dev = 'data/dev_dials.json'
     file_test = 'data/test_dials.json'
     # Create saving folder
-    if args['path']:
-        folder_name = args['path'].rsplit('/', 2)[0] + '/'
-    else:
-        folder_name = 'save/{}-'.format(args["decoder"])+args["addName"]+args['dataset']+str(args['task'])+'/'
-    print("folder_name", folder_name)
-    if not os.path.exists(folder_name): 
-        os.makedirs(folder_name)
+    cache_path = args.cache_path + '/'
+    print("caching file to", cache_path, flush=True)
+    if not os.path.exists(cache_path):
+        os.makedirs(cache_path)
     # load domain-slot pairs from ontology
     ontology = json.load(open("data/multi-woz/MULTIWOZ2 2/ontology.json", 'r'))
     ALL_SLOTS = get_slot_information(ontology)
@@ -359,57 +358,57 @@ def prepare_data_seq(training, batch_size=100):
     lang, mem_lang = Lang(), Lang()
     lang.index_words(ALL_SLOTS, 'slot')
     mem_lang.index_words(ALL_SLOTS, 'slot')
-    lang_name = 'lang-all.pkl' if args["all_vocab"] else 'lang-train.pkl'
-    mem_lang_name = 'mem-lang-all.pkl' if args["all_vocab"] else 'mem-lang-train.pkl'
+    lang_name = 'lang-all.pkl' if args.all_vocab else 'lang-train.pkl'
+    mem_lang_name = 'mem-lang-all.pkl' if args.all_vocab else 'mem-lang-train.pkl'
 
     if training:
-        pair_train, train_max_len, slot_train = read_langs(file_train, gating_dict, ALL_SLOTS, "train", lang, mem_lang, training)
-        train = get_seq(pair_train, lang, mem_lang, batch_size, True)
+        pair_train, train_max_len, slot_train = read_langs(args, file_train, gating_dict, ALL_SLOTS, "train", lang, mem_lang, training)
+        train = get_seq(pair_train, lang, mem_lang, train_batch_size, True)
         nb_train_vocab = lang.n_words
-        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang,training)
-        dev   = get_seq(pair_dev, lang, mem_lang, eval_batch, False)
-        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, training)
-        test  = get_seq(pair_test, lang, mem_lang, eval_batch, False)
-        if os.path.exists(folder_name+lang_name) and os.path.exists(folder_name+mem_lang_name):
+        pair_dev, dev_max_len, slot_dev = read_langs(args, file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang,training)
+        dev   = get_seq(pair_dev, lang, mem_lang, eval_batch_size, False)
+        pair_test, test_max_len, slot_test = read_langs(args, file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, training)
+        test  = get_seq(pair_test, lang, mem_lang, eval_batch_size, False)
+        if os.path.exists(cache_path+lang_name) and os.path.exists(cache_path+mem_lang_name):
             print("[Info] Loading saved lang files...")
-            with open(folder_name+lang_name, 'rb') as handle: 
+            with open(cache_path+lang_name, 'rb') as handle:
                 lang = pickle.load(handle)
-            with open(folder_name+mem_lang_name, 'rb') as handle: 
+            with open(cache_path+mem_lang_name, 'rb') as handle:
                 mem_lang = pickle.load(handle)
         else:
             print("[Info] Dumping lang files...")
-            with open(folder_name+lang_name, 'wb') as handle: 
+            with open(cache_path+lang_name, 'wb') as handle:
                 pickle.dump(lang, handle)
-            with open(folder_name+mem_lang_name, 'wb') as handle: 
+            with open(cache_path+mem_lang_name, 'wb') as handle:
                 pickle.dump(mem_lang, handle)
     else:
-        with open(folder_name+lang_name, 'rb') as handle:
+        with open(cache_path+lang_name, 'rb') as handle:
             lang = pickle.load(handle)
-        with open(folder_name+mem_lang_name, 'rb') as handle:
+        with open(cache_path+mem_lang_name, 'rb') as handle:
             mem_lang = pickle.load(handle)
 
         pair_train, train_max_len, slot_train, train, nb_train_vocab = [], 0, {}, [], 0
-        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang,training)
-        dev   = get_seq(pair_dev, lang, mem_lang, eval_batch, False)
-        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, training)
-        test  = get_seq(pair_test, lang, mem_lang, eval_batch, False)
+        pair_dev, dev_max_len, slot_dev = read_langs(args, file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang,training)
+        dev   = get_seq(pair_dev, lang, mem_lang, eval_batch_size, False)
+        pair_test, test_max_len, slot_test = read_langs(args, file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, training)
+        test  = get_seq(pair_test, lang, mem_lang, eval_batch_size, False)
 
 
     max_word = max(train_max_len, dev_max_len, test_max_len) + 1
 
-    print("Read %s pairs train" % len(pair_train))
-    print("Read %s pairs dev" % len(pair_dev))
-    print("Read %s pairs test" % len(pair_test))  
-    print("Vocab_size: %s " % lang.n_words)
-    print("Vocab_size Training %s" % nb_train_vocab )
-    print("Vocab_size Belief %s" % mem_lang.n_words )
-    print("Max. length of dialog words for RNN: %s " % max_word)
-    print("USE_CUDA={}".format(USE_CUDA))
+    print("Read %s pairs train" % len(pair_train), flush=True)
+    print("Read %s pairs dev" % len(pair_dev), flush=True)
+    print("Read %s pairs test" % len(pair_test), flush=True)
+    print("Vocab_size: %s " % lang.n_words, flush=True)
+    print("Vocab_size Training %s" % nb_train_vocab , flush=True)
+    print("Vocab_size Belief %s" % mem_lang.n_words , flush=True)
+    print("Max. length of dialog words for RNN: %s " % max_word, flush=True)
+    print("USE_CUDA={}".format(USE_CUDA), flush=True)
 
     SLOTS_LIST = [ALL_SLOTS, slot_train, slot_dev, slot_test]
-    print("[Train Set & Dev Set Slots]: Number is {} in total".format(str(len(SLOTS_LIST[2]))))
-    print(SLOTS_LIST[2])
-    print("[Test Set Slots]: Number is {} in total".format(str(len(SLOTS_LIST[3]))))
-    print(SLOTS_LIST[3])
+    print("[Train Set & Dev Set Slots]: Number is {} in total".format(str(len(SLOTS_LIST[2]))), flush=True)
+    print(SLOTS_LIST[2], flush=True)
+    print("[Test Set Slots]: Number is {} in total".format(str(len(SLOTS_LIST[3]))), flush=True)
+    print(SLOTS_LIST[3], flush=True)
     LANG = [lang, mem_lang]
     return train, dev, test, LANG, SLOTS_LIST, gating_dict, nb_train_vocab
