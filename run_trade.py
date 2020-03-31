@@ -15,7 +15,6 @@ def parse_argument():
     # parser.add_argument('--batch_size',default=64,type=int)
     parser.add_argument('--lr',default=0.001,type=float)
     parser.add_argument('--save_path')
-
     parser.add_argument('--all_vocab', type=bool, default=True)
     parser.add_argument('--train_batch_size', type=int, default=32)
     parser.add_argument('--eval_batch_size', type=int, default=64)
@@ -23,45 +22,45 @@ def parse_argument():
     return parser.parse_args()
 
 
-def start_train(args, model, train, dev, slot_train, slot_dev):
-    curr_acc, best_acc = 0.0, 48.0
-    curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
+def start_train(args, model, train, dev, slots):
+    curr_acc, best_acc = 0.0, 47.0
+    # curr_acc = model.evaluate(dev, best_acc, slots, None)
     for it in range(args.epoch):
         progress_bar = tqdm(enumerate(train),total=len(train))
         for i,d in progress_bar:
-            model.train_batch(d, 1, slot_train, reset=(i==0))
+            model.train_batch(d, 1, slots, reset=(i==0))
             # model.optimize(1.0)
             progress_bar.set_description(model.print_loss())
-        curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
+        curr_acc = model.evaluate(dev, best_acc, slots, None)
         model.scheduler.step(curr_acc)
         if curr_acc >= best_acc:
             best_acc = curr_acc
             best_model = model
 
 
-def start_test(model, test, slot_test):
-    model.evaluate(test, 1e7, slot_test)
+def start_test(model, test, slots):
+    model.evaluate(test, 1e7, slots)
 
 
 def main():
     args = parse_argument()
-    train, dev, test, lang, SLOTS_LIST, gating_dict, max_word = prepare_data_seq(args)
+    train, dev, test, ALL_SLOTS, gating_dict, i2w, w2i = process_data_dir(args)
     model = TRADE(
         args.hidden_size,
-        lang,
         args.save_path,
-        "dst",
         args.lr if args.train else 0,
         args.drop_rate if args.train else 0,
-        SLOTS_LIST,
+        ALL_SLOTS,
         gating_dict,
+        w2i,
+        i2w,
         emb_path=args.embedding
     )
     if args.train:
-        #start_train(args, model, train, test, SLOTS_LIST[1], SLOTS_LIST[3])
-        start_train(args, model, test, test, SLOTS_LIST[3], SLOTS_LIST[3])
+        #start_train(args, model, train, test, ALL_SLOTS)
+        start_train(args, model, test, test, ALL_SLOTS)
     else:
-        start_test(model, test, SLOTS_LIST[3])
+        start_test(model, test, ALL_SLOTS)
 
 
 if __name__ == "__main__":

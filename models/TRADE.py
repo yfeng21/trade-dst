@@ -22,13 +22,9 @@ import pprint
 
 
 class TRADE(nn.Module):
-    def __init__(self, hidden_size, lang, path, task, lr, dropout, slots, gating_dict, emb_path=None):
+    def __init__(self, hidden_size, path, lr, dropout, slots, gating_dict, w2i, i2w, emb_path=None,):
         super(TRADE, self).__init__()
-        self.name = "TRADE"
-        self.task = task
         self.hidden_size = hidden_size
-        self.lang = lang[0]
-        self.mem_lang = lang[1]
         self.lr = lr
         self.dropout = dropout
         self.slots = slots[0]
@@ -36,9 +32,11 @@ class TRADE(nn.Module):
         self.gating_dict = gating_dict
         self.nb_gate = len(gating_dict)
         self.cross_entorpy = nn.CrossEntropyLoss()
+        self.w2i = w2i
+        self.i2w = i2w
 
-        self.encoder = EncoderRNN(self.lang.n_words, hidden_size, self.dropout, emb_path=emb_path)
-        self.decoder = Generator(self.lang, self.encoder.embedding, self.lang.n_words, hidden_size, self.dropout,
+        self.encoder = EncoderRNN(len(self.w2i), hidden_size, self.dropout, emb_path=emb_path)
+        self.decoder = Generator(self.encoder.embedding, len(self.w2i), hidden_size, self.dropout,
                                  self.slots, self.nb_gate)
 
         if path:
@@ -156,45 +154,26 @@ class TRADE(nn.Module):
                 gate = torch.argmax(gates.transpose(0, 1)[bi], dim=1)
 
                 # pointer-generator results
-                if True:
-                    for si, sg in enumerate(gate):
-                        if sg == self.gating_dict["none"]:
-                            continue
-                        elif sg == self.gating_dict["ptr"]:
-                            pred = np.transpose(words[si])[bi]
-                            st = []
-                            for e in pred:
-                                if e == 'EOS':
-                                    break
-                                else:
-                                    st.append(e)
-                            st = " ".join(st)
-                            if st == "none":
-                                continue
-                            else:
-                                predict_belief_bsz_ptr.append(slot_temp[si] + "-" + str(st))
+            for si, sg in enumerate(gate):
+                if sg == self.gating_dict["none"]:
+                    continue
+                elif sg == self.gating_dict["ptr"]:
+                    pred = np.transpose(words[si])[bi]
+                    st = []
+                    for e in pred:
+                        if e == 'EOS':
+                            break
                         else:
-                            predict_belief_bsz_ptr.append(slot_temp[si] + "-" + inverse_unpoint_slot[sg.item()])
+                            st.append(e)
+                    st = " ".join(st)
+                    if st == "none":
+                        continue
+                    else:
+                        predict_belief_bsz_ptr.append(slot_temp[si] + "-" + str(st))
                 else:
-                    for si, _ in enumerate(gate):
-                        pred = np.transpose(words[si])[bi]
-                        st = []
-                        for e in pred:
-                            if e == 'EOS':
-                                break
-                            else:
-                                st.append(e)
-                        st = " ".join(st)
-                        if st == "none":
-                            continue
-                        else:
-                            predict_belief_bsz_ptr.append(slot_temp[si] + "-" + str(st))
+                    predict_belief_bsz_ptr.append(slot_temp[si] + "-" + inverse_unpoint_slot[sg.item()])
 
                 all_prediction[data_dev["ID"][bi]][data_dev["turn_id"][bi]]["pred_bs_ptr"] = predict_belief_bsz_ptr
-
-
-        # if args["genSample"]:
-        #     json.dump(all_prediction, open("all_prediction_{}.json".format(self.name), 'w'), indent=4)
 
         joint_acc_score_ptr, F1_score_ptr, turn_acc_score_ptr = self.evaluate_metrics(all_prediction, "pred_bs_ptr",
                                                                                       slot_temp)
@@ -316,10 +295,9 @@ class EncoderRNN(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, lang, shared_emb, vocab_size, hidden_size, dropout, slots, nb_gate):
+    def __init__(self, shared_emb, vocab_size, hidden_size, dropout, slots, nb_gate):
         super(Generator, self).__init__()
         self.vocab_size = vocab_size
-        self.lang = lang
         self.embedding = shared_emb
         self.dropout_layer = nn.Dropout(dropout)
         self.gru = nn.GRU(hidden_size, hidden_size, dropout=dropout)
@@ -355,39 +333,6 @@ class Generator(nn.Module):
         domain_ids = torch.LongTensor(domain_ids).cuda()
         slot_ids = torch.LongTensor(slot_ids).cuda()
         slot_embs = self.slot_embedding(domain_ids) + self.slot_embedding(slot_ids)
-
-        # Compute pointer-generator output, decoding each (domain, slot) one-by-one
-        # words_point_out = []
-        # for sid, slot in enumerate(slot_temp):
-        #     hidden = encoded_hidden
-        #     words = []
-        #     slot_emb = slot_embs[sid]
-        #     decoder_input = self.dropout_layer(slot_emb).expand(batch_size, self.hidden_size)
-        #     for position in range(max_res_len):
-        #         dec_state, hidden = self.gru(decoder_input.expand_as(hidden), hidden)
-        #         context_vec, logits, prob = self.attend(encoded_outputs, hidden.squeeze(0), encoded_lens)
-        #         if position == 0:
-        #             all_gate_outputs[sid] = self.W_gate(context_vec)
-        #         p_vocab = torch.matmul(hidden.squeeze(0), self.embedding.weight.transpose(1, 0))
-        #         p_vocab = F.softmax(p_vocab, dim=1)
-        #
-        #         p_gen_vec = torch.cat([dec_state.squeeze(0), context_vec, decoder_input], -1)
-        #
-        #         interp = self.sigmoid(self.W_ratio(p_gen_vec))
-        #         p_context_ptr = torch.zeros(p_vocab.size()).cuda()
-        #         p_context_ptr.scatter_add_(1, story, prob)
-        #
-        #         final_p_vocab = (1 - interp) * p_context_ptr + interp * p_vocab
-        #
-        #         pred_word = torch.argmax(final_p_vocab, dim=1)
-        #         words.append([self.lang.index2word[w_idx.item()] for w_idx in pred_word])
-        #         all_point_outputs[sid, :, position, :] = final_p_vocab
-        #         if use_teacher_forcing:
-        #             decoder_input = self.embedding(target_batches[:, sid, position])  # Chosen word is next input
-        #         else:
-        #             decoder_input = self.embedding(pred_word)
-        #         decoder_input = decoder_input.cuda()
-        #     words_point_out.append(words)
 
         all_point_outputs = []
         num_slots = len(slot_temp)
@@ -426,8 +371,6 @@ class Generator(nn.Module):
 
             pred_word = torch.argmax(final_p_vocab, dim=1)
             words.append(pred_word.view(num_slots, batch_size).cpu())
-            # words.append([self.lang.index2word[w_idx] for w_idx in pred_word.cpu().tolist()])
-            # all_point_outputs[:, :, position, :] = final_p_vocab.view(num_slots, batch_size, -1)
             all_point_outputs.append(final_p_vocab.view(num_slots, batch_size, -1))
             if use_teacher_forcing:
                 decoder_input = self.embedding(target_batches[:, :, position].transpose(0,1).reshape(-1))  # Chosen word is next input
@@ -437,7 +380,7 @@ class Generator(nn.Module):
         all_point_outputs = torch.stack(all_point_outputs, dim=2)
         # words_point_out = list(map(list, zip(*words)))
         words = torch.stack(words, dim=1).tolist()
-        words = [[[self.lang.index2word[z] for z in y] for y in x] for x in words]
+        words = [[[self.i2w[z] for z in y] for y in x] for x in words]
         return all_point_outputs, all_gate_outputs, words, []
 
     def attend(self, hiddens, query, lengths):
