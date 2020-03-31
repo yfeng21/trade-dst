@@ -425,7 +425,8 @@ class Generator(nn.Module):
             final_p_vocab = (1 - interp) * p_context_ptr + interp * p_vocab
 
             pred_word = torch.argmax(final_p_vocab, dim=1)
-            words.append([self.lang.index2word[w_idx] for w_idx in pred_word.cpu().tolist()])
+            words.append(pred_word.view(num_slots, batch_size).cpu())
+            # words.append([self.lang.index2word[w_idx] for w_idx in pred_word.cpu().tolist()])
             # all_point_outputs[:, :, position, :] = final_p_vocab.view(num_slots, batch_size, -1)
             all_point_outputs.append(final_p_vocab.view(num_slots, batch_size, -1))
             if use_teacher_forcing:
@@ -434,8 +435,10 @@ class Generator(nn.Module):
                 decoder_input = self.embedding(pred_word)
             decoder_input = decoder_input.cuda()
         all_point_outputs = torch.stack(all_point_outputs, dim=2)
-        words_point_out = list(map(list, zip(*words)))
-        return all_point_outputs, all_gate_outputs, words_point_out, []
+        # words_point_out = list(map(list, zip(*words)))
+        words = torch.stack(words, dim=1).tolist()
+        words = [[[self.lang.index2word[z] for z in y] for y in x] for x in words]
+        return all_point_outputs, all_gate_outputs, words, []
 
     def attend(self, hiddens, query, lengths):
         """

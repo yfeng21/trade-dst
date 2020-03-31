@@ -336,7 +336,7 @@ def get_seq(pairs, lang, mem_lang, batch_size, shuffle):
 def prepare_data_seq(args):
     training = args.train
     train_batch_size = args.train_batch_size
-    eval_batch_size = args.train_batch_size
+    eval_batch_size = args.eval_batch_size
     file_train = args.data_dir+'/train_dials.json'
     file_dev = args.data_dir+'/dev_dials.json'
     file_test = args.data_dir+'/test_dials.json'
