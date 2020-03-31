@@ -332,27 +332,22 @@ def get_seq(pairs, lang, mem_lang, batch_size, shuffle):
     return data_loader
 
 
-def get_slot_information(ontology):
-    ontology_domains = dict([(k, v) for k, v in ontology.items() if k.split("-")[0] in EXPERIMENT_DOMAINS])
-    SLOTS = [k.replace(" ","").lower() if ("book" not in k) else k.lower() for k in ontology_domains.keys()]
-    return SLOTS
-
 
 def prepare_data_seq(args):
     training = args.train
     train_batch_size = args.train_batch_size
-    eval_batch_size = args.eval_batch_size
-    file_train = 'data/train_dials.json'
-    file_dev = 'data/dev_dials.json'
-    file_test = 'data/test_dials.json'
+    eval_batch_size = args.train_batch_size
+    file_train = args.data_dir+'/train_dials.json'
+    file_dev = args.data_dir+'/dev_dials.json'
+    file_test = args.data_dir+'/test_dials.json'
     # Create saving folder
     cache_path = args.cache_path + '/'
     print("caching file to", cache_path, flush=True)
     if not os.path.exists(cache_path):
         os.makedirs(cache_path)
     # load domain-slot pairs from ontology
-    ontology = json.load(open("data/multi-woz/MULTIWOZ2 2/ontology.json", 'r'))
-    ALL_SLOTS = get_slot_information(ontology)
+    with open(args.data_dir+'/all_slots.pkl','rb') as f:
+        ALL_SLOTS = pickle.load(f)
     gating_dict = {"ptr":0, "dontcare":1, "none":2}
     # Vocabulary
     lang, mem_lang = Lang(), Lang()

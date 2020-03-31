@@ -24,20 +24,18 @@ def parse_argument():
 
 
 def start_train(args, model, train, dev, slot_train, slot_dev):
-    curr_acc, best_acc = 0.0, 0.0
+    curr_acc, best_acc = 0.0, 48.0
     for it in range(args.epoch):
         progress_bar = tqdm(enumerate(train),total=len(train))
         for i,d in progress_bar:
             model.train_batch(d, 1, slot_train, reset=(i==0))
             # model.optimize(1.0)
             progress_bar.set_description(model.print_loss())
-
-        if ((it+1) % 10) == 0:
-            curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
-            model.scheduler.step(curr_acc)
-            if curr_acc >= best_acc:
-                best_acc = curr_acc
-                best_model = model
+        curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
+        model.scheduler.step(curr_acc)
+        if curr_acc >= best_acc:
+            best_acc = curr_acc
+            best_model = model
 
 
 def start_test(model, test, slot_test):
@@ -59,7 +57,8 @@ def main():
         emb_path=args.embedding
     )
     if args.train:
-        start_train(args, model, train, dev, SLOTS_LIST[1], SLOTS_LIST[2])
+        #start_train(args, model, train, test, SLOTS_LIST[1], SLOTS_LIST[3])
+        start_train(args, model, test, test, SLOTS_LIST[3], SLOTS_LIST[3])
     else:
         start_test(model, test, SLOTS_LIST[3])
 

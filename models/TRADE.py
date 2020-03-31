@@ -192,9 +192,6 @@ class TRADE(nn.Module):
 
                 all_prediction[data_dev["ID"][bi]][data_dev["turn_id"][bi]]["pred_bs_ptr"] = predict_belief_bsz_ptr
 
-                if set(data_dev["turn_belief"][bi]) != set(predict_belief_bsz_ptr) and args["genSample"]:
-                    print("True", set(data_dev["turn_belief"][bi]))
-                    print("Pred", set(predict_belief_bsz_ptr), "\n")
 
         # if args["genSample"]:
         #     json.dump(all_prediction, open("all_prediction_{}.json".format(self.name), 'w'), indent=4)
@@ -213,16 +210,10 @@ class TRADE(nn.Module):
         joint_acc_score = joint_acc_score_ptr  # (joint_acc_score_ptr + joint_acc_score_class)/2
         F1_score = F1_score_ptr
 
-        if (early_stop == 'F1'):
-            if (F1_score >= matric_best):
-                self.save_model('ENTF1-{:.4f}'.format(F1_score))
-                print("MODEL SAVED")
-            return F1_score
-        else:
-            if (joint_acc_score >= matric_best):
-                self.save_model('ACC-{:.4f}'.format(joint_acc_score))
-                print("MODEL SAVED")
-            return joint_acc_score
+        if (joint_acc_score >= matric_best):
+            self.save_model("best_model")
+            print("MODEL SAVED ACC-{:.4f}".format(joint_acc_score))
+        return joint_acc_score
 
     def evaluate_metrics(self, all_prediction, from_which, slot_temp):
         total, turn_acc, joint_acc, F1_pred, F1_count = 0, 0, 0, 0, 0
