@@ -45,7 +45,7 @@ class Dataset(data.Dataset):
         turn_uttr = self.turn_uttr[index]
         turn_domain = self.preprocess_domain(self.turn_domain[index])
         generate_y = self.generate_y[index]
-        generate_y = self.preprocess_slot(generate_y, self.trg_word2id)
+        generate_y = self.preprocess_slot(generate_y, self.src_word2id)
         context = self.dialog_history[index] 
         context = self.preprocess(context, self.src_word2id)
         context_plain = self.dialog_history[index]

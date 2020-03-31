@@ -37,7 +37,7 @@ class TRADE(nn.Module):
 
         self.encoder = EncoderRNN(len(self.w2i), hidden_size, self.dropout, emb_path=emb_path)
         self.decoder = Generator(self.encoder.embedding, len(self.w2i), hidden_size, self.dropout,
-                                 self.slots, self.nb_gate)
+                                 self.slots, self.nb_gate,self.i2w)
 
         if path:
             self.encoder.load_state_dict(torch.load(os.path.join(path, 'encoder.bin')))
@@ -154,24 +154,24 @@ class TRADE(nn.Module):
                 gate = torch.argmax(gates.transpose(0, 1)[bi], dim=1)
 
                 # pointer-generator results
-            for si, sg in enumerate(gate):
-                if sg == self.gating_dict["none"]:
-                    continue
-                elif sg == self.gating_dict["ptr"]:
-                    pred = np.transpose(words[si])[bi]
-                    st = []
-                    for e in pred:
-                        if e == 'EOS':
-                            break
-                        else:
-                            st.append(e)
-                    st = " ".join(st)
-                    if st == "none":
+                for si, sg in enumerate(gate):
+                    if sg == self.gating_dict["none"]:
                         continue
+                    elif sg == self.gating_dict["ptr"]:
+                        pred = np.transpose(words[si])[bi]
+                        st = []
+                        for e in pred:
+                            if e == 'EOS':
+                                break
+                            else:
+                                st.append(e)
+                        st = " ".join(st)
+                        if st == "none":
+                            continue
+                        else:
+                            predict_belief_bsz_ptr.append(slot_temp[si] + "-" + str(st))
                     else:
-                        predict_belief_bsz_ptr.append(slot_temp[si] + "-" + str(st))
-                else:
-                    predict_belief_bsz_ptr.append(slot_temp[si] + "-" + inverse_unpoint_slot[sg.item()])
+                        predict_belief_bsz_ptr.append(slot_temp[si] + "-" + inverse_unpoint_slot[sg.item()])
 
                 all_prediction[data_dev["ID"][bi]][data_dev["turn_id"][bi]]["pred_bs_ptr"] = predict_belief_bsz_ptr
 
@@ -295,7 +295,7 @@ class EncoderRNN(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, shared_emb, vocab_size, hidden_size, dropout, slots, nb_gate):
+    def __init__(self, shared_emb, vocab_size, hidden_size, dropout, slots, nb_gate, i2w):
         super(Generator, self).__init__()
         self.vocab_size = vocab_size
         self.embedding = shared_emb
@@ -307,6 +307,7 @@ class Generator(nn.Module):
         self.softmax = nn.Softmax(dim=1)
         self.sigmoid = nn.Sigmoid()
         self.slots = slots
+        self.i2w = i2w
 
         self.W_gate = nn.Linear(hidden_size, nb_gate)
 
