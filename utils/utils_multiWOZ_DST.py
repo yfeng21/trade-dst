@@ -313,6 +313,6 @@ def prepare_data_seq(args):
     with open(cache_path+'lang-all.pkl', 'rb') as handle:
         lang = pickle.load(handle)
     train = read_langs(file_train, gating_dict, ALL_SLOTS,lang, train_batch_size, True)
-    dev = read_langs(file_dev, gating_dict, ALL_SLOTS,eval_batch_size, False)
-    test = read_langs(file_test, gating_dict, ALL_SLOTS,eval_batch_size, False)
+    dev = read_langs(file_dev, gating_dict, ALL_SLOTS,lang, eval_batch_size, False)
+    test = read_langs(file_test, gating_dict, ALL_SLOTS, lang, eval_batch_size, False)
     return train, dev, test, lang, ALL_SLOTS, gating_dict

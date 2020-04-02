@@ -29,8 +29,7 @@ class TRADE(nn.Module):
         self.lang = lang
         self.lr = lr
         self.dropout = dropout
-        self.slots = slots[0]
-        self.slot_temp = slots[2]
+        self.slots = slots
         self.gating_dict = gating_dict
         self.nb_gate = len(gating_dict)
         self.cross_entorpy = nn.CrossEntropyLoss()

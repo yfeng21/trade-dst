@@ -26,7 +26,7 @@ def parse_argument():
 
 def start_train(args, model, train, dev, slots):
     curr_acc, best_acc = 0.0, 48.0
-    # curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
+    best_acc = model.evaluate(dev, best_acc, slots, None)
     for it in range(args.epoch):
         progress_bar = tqdm(enumerate(train),total=len(train))
         for i,d in progress_bar:
