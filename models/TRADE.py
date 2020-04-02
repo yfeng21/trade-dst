@@ -22,11 +22,12 @@ import pprint
 
 
 class TRADE(nn.Module):
-    def __init__(self, hidden_size, lang, path, lr, dropout, slots, gating_dict, emb_path=None):
+    def __init__(self, hidden_size,  word2index, index2word, path, lr, dropout, slots, gating_dict, emb_path=None):
         super(TRADE, self).__init__()
         self.name = "TRADE"
         self.hidden_size = hidden_size
-        self.lang = lang
+        self.word2index = word2index
+        self.index2word = index2word
         self.lr = lr
         self.dropout = dropout
         self.slots = slots
@@ -34,8 +35,8 @@ class TRADE(nn.Module):
         self.nb_gate = len(gating_dict)
         self.cross_entorpy = nn.CrossEntropyLoss()
 
-        self.encoder = EncoderRNN(self.lang.n_words, hidden_size, self.dropout, emb_path=emb_path)
-        self.decoder = Generator(self.lang, self.encoder.embedding, self.lang.n_words, hidden_size, self.dropout,
+        self.encoder = EncoderRNN(len(self.word2index), hidden_size, self.dropout, emb_path=emb_path)
+        self.decoder = Generator(self.index2word, self.encoder.embedding, len(self.word2index), hidden_size, self.dropout,
                                  self.slots, self.nb_gate)
 
         if path:
@@ -318,10 +319,10 @@ class EncoderRNN(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, lang, shared_emb, vocab_size, hidden_size, dropout, slots, nb_gate):
+    def __init__(self, index2word, shared_emb, vocab_size, hidden_size, dropout, slots, nb_gate):
         super(Generator, self).__init__()
         self.vocab_size = vocab_size
-        self.lang = lang
+        self.index2word = index2word
         self.embedding = shared_emb
         self.dropout_layer = nn.Dropout(dropout)
         self.gru = nn.GRU(hidden_size, hidden_size, dropout=dropout)
@@ -439,7 +440,7 @@ class Generator(nn.Module):
         all_point_outputs = torch.stack(all_point_outputs, dim=2)
         # words_point_out = list(map(list, zip(*words)))
         words = torch.stack(words, dim=1).tolist()
-        words = [[[self.lang.index2word[z] for z in y] for y in x] for x in words]
+        words = [[[self.index2word[z] for z in y] for y in x] for x in words]
         return all_point_outputs, all_gate_outputs, words, []
 
     def attend(self, hiddens, query, lengths):

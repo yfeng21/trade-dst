@@ -54,10 +54,11 @@ def start_test(model, test, slot_test):
 
 def main():
     args = parse_argument()
-    train, dev, test, lang, ALL_SLOTS, gating_dict = prepare_data_seq(args)
+    train, dev, test,  word2index, index2word, ALL_SLOTS, gating_dict = prepare_data_seq(args)
     model = TRADE(
         args.hidden_size,
-        lang,
+        word2index,
+        index2word,
         args.save_path,
         args.lr if args.train else 0,
         args.drop_rate if args.train else 0,

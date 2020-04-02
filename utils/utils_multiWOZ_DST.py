@@ -24,37 +24,37 @@ from .fix_label import *
 
 EXPERIMENT_DOMAINS = ["hotel", "train", "restaurant", "attraction", "taxi"]
 
-class Lang:
-    def __init__(self):
-        self.word2index = {}
-        self.index2word = {PAD_token: "PAD", SOS_token: "SOS", EOS_token: "EOS", UNK_token: 'UNK'}
-        self.n_words = len(self.index2word) # Count default tokens
-        self.word2index = dict([(v, k) for k, v in self.index2word.items()])
-      
-    def index_words(self, sent, type):
-        if type == 'utter':
-            for word in sent.split(" "):
-                self.index_word(word)
-        elif type == 'slot':
-            for slot in sent:
-                d, s = slot.split("-")
-                self.index_word(d)
-                for ss in s.split(" "):
-                    self.index_word(ss)
-        elif type == 'belief':
-            for slot, value in sent.items():
-                d, s = slot.split("-")
-                self.index_word(d)
-                for ss in s.split(" "):
-                    self.index_word(ss)
-                for v in value.split(" "):
-                    self.index_word(v)
-
-    def index_word(self, word):
-        if word not in self.word2index:
-            self.word2index[word] = self.n_words
-            self.index2word[self.n_words] = word
-            self.n_words += 1
+# class Lang:
+#     def __init__(self):
+#         self.word2index = {}
+#         self.index2word = {PAD_token: "PAD", SOS_token: "SOS", EOS_token: "EOS", UNK_token: 'UNK'}
+#         self.n_words = len(self.index2word) # Count default tokens
+#         self.word2index = dict([(v, k) for k, v in self.index2word.items()])
+#
+#     def index_words(self, sent, type):
+#         if type == 'utter':
+#             for word in sent.split(" "):
+#                 self.index_word(word)
+#         elif type == 'slot':
+#             for slot in sent:
+#                 d, s = slot.split("-")
+#                 self.index_word(d)
+#                 for ss in s.split(" "):
+#                     self.index_word(ss)
+#         elif type == 'belief':
+#             for slot, value in sent.items():
+#                 d, s = slot.split("-")
+#                 self.index_word(d)
+#                 for ss in s.split(" "):
+#                     self.index_word(ss)
+#                 for v in value.split(" "):
+#                     self.index_word(v)
+#
+#     def index_word(self, word):
+#         if word not in self.word2index:
+#             self.word2index[word] = self.n_words
+#             self.index2word[self.n_words] = word
+#             self.n_words += 1
 
 
 class UtteranceDataset(data.Dataset):
@@ -206,7 +206,7 @@ def collate_fn(data):
 
     return batch
 
-def read_langs(file_name, gating_dict, SLOTS, lang, batch_size,shuffle):
+def read_langs(file_name, gating_dict, SLOTS, word2index, batch_size,shuffle):
     print(("Reading from {}".format(file_name)))
     data = []
     max_resp_len, max_value_len = 0, 0
@@ -284,7 +284,7 @@ def read_langs(file_name, gating_dict, SLOTS, lang, batch_size,shuffle):
         for k in data_keys:
             data_info[k].append(pair[k]) 
 
-    dataset = UtteranceDataset(data_info, lang.word2index)
+    dataset = UtteranceDataset(data_info, word2index)
     data_loader = torch.utils.data.DataLoader(dataset=dataset,
                                                   batch_size=batch_size,
                                                   shuffle=shuffle,
@@ -310,9 +310,12 @@ def prepare_data_seq(args):
         ALL_SLOTS = pickle.load(f)
     gating_dict = {"ptr":0, "dontcare":1, "none":2}
 
-    with open(cache_path+'lang-all.pkl', 'rb') as handle:
-        lang = pickle.load(handle)
-    train = read_langs(file_train, gating_dict, ALL_SLOTS,lang, train_batch_size, True)
-    dev = read_langs(file_dev, gating_dict, ALL_SLOTS,lang, eval_batch_size, False)
-    test = read_langs(file_test, gating_dict, ALL_SLOTS, lang, eval_batch_size, False)
-    return train, dev, test, lang, ALL_SLOTS, gating_dict
+    # with open(cache_path+'lang-all.pkl', 'rb') as handle:
+    #     lang = pickle.load(handle)
+    with open(args.data_dir+'/vocab_dict.pkl', 'rb') as handle:
+        index2word = pickle.load(handle)
+        word2index = pickle.load(handle)
+    train = read_langs(file_train, gating_dict, ALL_SLOTS,word2index, train_batch_size, True)
+    dev = read_langs(file_dev, gating_dict, ALL_SLOTS,word2index, eval_batch_size, False)
+    test = read_langs(file_test, gating_dict, ALL_SLOTS, word2index, eval_batch_size, False)
+    return train, dev, test, word2index, index2word, ALL_SLOTS, gating_dict
