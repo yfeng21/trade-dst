@@ -22,10 +22,9 @@ import pprint
 
 
 class TRADE(nn.Module):
-    def __init__(self, hidden_size, lang, path, task, lr, dropout, slots, gating_dict, emb_path=None):
+    def __init__(self, hidden_size, lang, path, lr, dropout, slots, gating_dict, emb_path=None):
         super(TRADE, self).__init__()
         self.name = "TRADE"
-        self.task = task
         self.hidden_size = hidden_size
         self.lang = lang
         self.lr = lr

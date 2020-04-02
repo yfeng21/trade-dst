@@ -206,32 +206,15 @@ def collate_fn(data):
 
     return batch
 
-def read_langs(args: argparse.Namespace, file_name, gating_dict, SLOTS, dataset, lang, training, max_line = None):
+def read_langs(file_name, gating_dict, SLOTS, lang, batch_size,shuffle):
     print(("Reading from {}".format(file_name)))
     data = []
     max_resp_len, max_value_len = 0, 0
-    domain_counter = {} 
     with open(file_name) as f:
         dials = json.load(f)
-        # create vocab first 
-        for dial_dict in dials:
-            if (args.all_vocab or dataset=="train") and training:
-                for ti, turn in enumerate(dial_dict["dialogue"]):
-                    lang.index_words(turn["system_transcript"], 'utter')
-                    lang.index_words(turn["transcript"], 'utter')
-
         cnt_lin = 1
         for dial_dict in dials:
             dialog_history = ""
-            last_belief_dict = {}
-            # Filtering and counting domains
-            for domain in dial_dict["domains"]:
-                if domain not in EXPERIMENT_DOMAINS:
-                    continue
-                if domain not in domain_counter.keys():
-                    domain_counter[domain] = 0
-                domain_counter[domain] += 1
-
             # Reading data
             for ti, turn in enumerate(dial_dict["dialogue"]):
                 turn_domain = turn["domain"]
@@ -243,7 +226,7 @@ def read_langs(args: argparse.Namespace, file_name, gating_dict, SLOTS, dataset,
                 turn_belief_dict = fix_general_label_error(turn["belief_state"], False, SLOTS)
 
                 # Generate domain-dependent slot list
-                slot_temp = SLOTS
+                # slot_temp = SLOTS
                 # if dataset == "train" or dataset == "dev":
                 #     if args["except_domain"] != "":
                 #         slot_temp = [k for k in SLOTS if args["except_domain"] not in k]
@@ -262,8 +245,7 @@ def read_langs(args: argparse.Namespace, file_name, gating_dict, SLOTS, dataset,
                 turn_belief_list = [str(k)+'-'+str(v) for k, v in turn_belief_dict.items()]
 
                 class_label, generate_y, slot_mask, gating_label  = [], [], [], []
-                start_ptr_label, end_ptr_label = [], []
-                for slot in slot_temp:
+                for slot in SLOTS:
                     if slot in turn_belief_dict.keys(): 
                         generate_y.append(turn_belief_dict[slot])
 
@@ -293,25 +275,12 @@ def read_langs(args: argparse.Namespace, file_name, gating_dict, SLOTS, dataset,
                     'generate_y':generate_y
                     }
                 data.append(data_detail)
-                
-                if max_resp_len < len(source_text.split()):
-                    max_resp_len = len(source_text.split())
-                
-            cnt_lin += 1
-            if(max_line and cnt_lin>=max_line):
-                break
-
-    print("domain_counter", domain_counter)
-    return data, max_resp_len, slot_temp
-
-
-def get_seq(pairs, lang, batch_size, shuffle):
     data_info = {}
-    data_keys = pairs[0].keys()
+    data_keys = data[0].keys()
     for k in data_keys:
         data_info[k] = []
 
-    for pair in pairs:
+    for pair in data:
         for k in data_keys:
             data_info[k].append(pair[k]) 
 
@@ -340,32 +309,10 @@ def prepare_data_seq(args):
     with open(args.data_dir+'/all_slots.pkl','rb') as f:
         ALL_SLOTS = pickle.load(f)
     gating_dict = {"ptr":0, "dontcare":1, "none":2}
-    # Vocabulary
-    lang = Lang()
-    lang.index_words(ALL_SLOTS, 'slot')
-    lang_name = 'lang-all.pkl' if args.all_vocab else 'lang-train.pkl'
 
-
-    with open(cache_path+lang_name, 'rb') as handle:
+    with open(cache_path+'lang-all.pkl', 'rb') as handle:
         lang = pickle.load(handle)
-    pair_train, train_max_len, slot_train = read_langs(args, file_train, gating_dict, ALL_SLOTS, "train", lang, training)
-    train = get_seq(pair_train, lang, train_batch_size, True)
-    nb_train_vocab = lang.n_words
-    pair_dev, dev_max_len, slot_dev = read_langs(args, file_dev, gating_dict, ALL_SLOTS, "dev", lang, training)
-    dev   = get_seq(pair_dev, lang, eval_batch_size, False)
-    pair_test, test_max_len, slot_test = read_langs(args, file_test, gating_dict, ALL_SLOTS, "test", lang, training)
-    test  = get_seq(pair_test, lang, eval_batch_size, False)
-
-    print("Read %s pairs train" % len(pair_train), flush=True)
-    print("Read %s pairs dev" % len(pair_dev), flush=True)
-    print("Read %s pairs test" % len(pair_test), flush=True)
-    print("Vocab_size: %s " % lang.n_words, flush=True)
-    print("Vocab_size Training %s" % nb_train_vocab , flush=True)
-    print("USE_CUDA={}".format(USE_CUDA), flush=True)
-
-    SLOTS_LIST = [ALL_SLOTS, slot_train, slot_dev, slot_test]
-    print("[Train Set & Dev Set Slots]: Number is {} in total".format(str(len(SLOTS_LIST[2]))), flush=True)
-    print(SLOTS_LIST[2], flush=True)
-    print("[Test Set Slots]: Number is {} in total".format(str(len(SLOTS_LIST[3]))), flush=True)
-    print(SLOTS_LIST[3], flush=True)
-    return train, dev, test, lang, SLOTS_LIST, gating_dict, nb_train_vocab
+    train = read_langs(file_train, gating_dict, ALL_SLOTS,lang, train_batch_size, True)
+    dev = read_langs(file_dev, gating_dict, ALL_SLOTS,eval_batch_size, False)
+    test = read_langs(file_test, gating_dict, ALL_SLOTS,eval_batch_size, False)
+    return train, dev, test, lang, ALL_SLOTS, gating_dict

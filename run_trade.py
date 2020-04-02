@@ -24,13 +24,13 @@ def parse_argument():
     return parser.parse_args()
 
 
-def start_train(args, model, train, dev, slot_train, slot_dev):
+def start_train(args, model, train, dev, slots):
     curr_acc, best_acc = 0.0, 48.0
     # curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
     for it in range(args.epoch):
         progress_bar = tqdm(enumerate(train),total=len(train))
         for i,d in progress_bar:
-            loss = model.run_batch(d, slot_train, reset=(i==0))
+            loss = model.run_batch(d, slots, reset=(i==0))
             if args.gradient_accum_steps > 1:
                 loss = loss / args.gradient_accum_steps
             loss.backward()
@@ -41,7 +41,7 @@ def start_train(args, model, train, dev, slot_train, slot_dev):
                 model.optimizer.zero_grad()
             progress_bar.set_description(model.print_loss())
 
-        curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
+        curr_acc = model.evaluate(dev, best_acc, slots, None)
         model.scheduler.step(curr_acc)
         if curr_acc >= best_acc:
             best_acc = curr_acc
@@ -54,23 +54,21 @@ def start_test(model, test, slot_test):
 
 def main():
     args = parse_argument()
-    train, dev, test, lang, SLOTS_LIST, gating_dict, max_word = prepare_data_seq(args)
+    train, dev, test, lang, ALL_SLOTS, gating_dict = prepare_data_seq(args)
     model = TRADE(
         args.hidden_size,
         lang,
         args.save_path,
-        "dst",
         args.lr if args.train else 0,
         args.drop_rate if args.train else 0,
-        SLOTS_LIST,
+        ALL_SLOTS,
         gating_dict,
         emb_path=args.embedding
     )
     if args.train:
-        #start_train(args, model, train, test, SLOTS_LIST[1], SLOTS_LIST[3])
-        start_train(args, model, train, test, SLOTS_LIST[3], SLOTS_LIST[3])
+        start_train(args, model, train, test, ALL_SLOTS)
     else:
-        start_test(model, test, SLOTS_LIST[3])
+        start_test(model, test, ALL_SLOTS)
 
 
 if __name__ == "__main__":
