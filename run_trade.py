@@ -54,22 +54,22 @@ def start_test(model, test, slot_test):
 
 def main():
     args = parse_argument()
-    train, dev, test,  word2index, index2word, ALL_SLOTS, gating_dict = prepare_data_seq(args)
+    train, dev, test,  w2i, i2w, candidate_slots, gating_dict = prepare_data_seq(args)
     model = TRADE(
         args.hidden_size,
-        word2index,
-        index2word,
+        w2i,
+        i2w,
         args.save_path,
         args.lr if args.train else 0,
         args.drop_rate if args.train else 0,
-        ALL_SLOTS,
+        candidate_slots,
         gating_dict,
         emb_path=args.embedding
     )
     if args.train:
-        start_train(args, model, train, test, ALL_SLOTS)
+        start_train(args, model, train, test, candidate_slots)
     else:
-        start_test(model, test, ALL_SLOTS)
+        start_test(model, test, candidate_slots)
 
 
 if __name__ == "__main__":

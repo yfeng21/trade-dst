@@ -22,12 +22,12 @@ import pprint
 
 
 class TRADE(nn.Module):
-    def __init__(self, hidden_size,  word2index, index2word, path, lr, dropout, slots, gating_dict, emb_path=None):
+    def __init__(self, hidden_size,  w2i, i2w, path, lr, dropout, slots, gating_dict, emb_path=None):
         super(TRADE, self).__init__()
         self.name = "TRADE"
         self.hidden_size = hidden_size
-        self.word2index = word2index
-        self.index2word = index2word
+        self.w2i = w2i
+        self.i2w = i2w
         self.lr = lr
         self.dropout = dropout
         self.slots = slots
@@ -35,8 +35,8 @@ class TRADE(nn.Module):
         self.nb_gate = len(gating_dict)
         self.cross_entorpy = nn.CrossEntropyLoss()
 
-        self.encoder = EncoderRNN(len(self.word2index), hidden_size, self.dropout, emb_path=emb_path)
-        self.decoder = Generator(self.index2word, self.encoder.embedding, len(self.word2index), hidden_size, self.dropout,
+        self.encoder = EncoderRNN(len(self.w2i), hidden_size, self.dropout, emb_path=emb_path)
+        self.decoder = Generator(self.i2w, self.encoder.embedding, len(self.w2i), hidden_size, self.dropout,
                                  self.slots, self.nb_gate)
 
         if path:
@@ -72,7 +72,7 @@ class TRADE(nn.Module):
     def reset(self):
         self.loss, self.print_every, self.loss_ptr, self.loss_gate, self.loss_class = 0, 1, 0, 0, 0
 
-    def run_batch(self, data, slot_temp, reset=0):
+    def run_batch(self, data, candidate_slots, reset=0):
         if reset: self.reset()
         # Zero gradients of both optimizers
         # self.optimizer.zero_grad()
@@ -80,7 +80,7 @@ class TRADE(nn.Module):
         # Encode and Decode
         use_teacher_forcing = random.random() < 0.5
         all_point_outputs, gates, words_point_out, words_class_out = self.encode_and_decode(
-            data, use_teacher_forcing, slot_temp)
+            data, use_teacher_forcing, candidate_slots)
 
         loss_ptr = masked_cross_entropy_for_value(
             all_point_outputs.transpose(0, 1).contiguous(),
@@ -105,7 +105,7 @@ class TRADE(nn.Module):
     def clip(self, clip):
         torch.nn.utils.clip_grad_norm_(self.parameters(), clip)
 
-    def encode_and_decode(self, data, use_teacher_forcing, slot_temp):
+    def encode_and_decode(self, data, use_teacher_forcing, candidate_slots):
         # Build unknown mask for memory to encourage generalization
         if True and self.decoder.training:
             story_size = data['context'].size()
@@ -134,10 +134,10 @@ class TRADE(nn.Module):
                                                                                                      story, max_res_len,
                                                                                                      data['generate_y'], \
                                                                                                      use_teacher_forcing,
-                                                                                                     slot_temp)
+                                                                                                     candidate_slots)
         return all_point_outputs, all_gate_outputs, words_point_out, words_class_out
 
-    def evaluate(self, dev, matric_best, slot_temp, early_stop=None):
+    def evaluate(self, dev, matric_best, candidate_slots, early_stop=None):
         # Set to not-training mode to disable dropout
         self.encoder.train(False)
         self.decoder.train(False)
@@ -148,7 +148,7 @@ class TRADE(nn.Module):
         for j, data_dev in pbar:
             # Encode and Decode
             batch_size = len(data_dev['context_len'])
-            _, gates, words, class_words = self.encode_and_decode(data_dev, False, slot_temp)
+            _, gates, words, class_words = self.encode_and_decode(data_dev, False, candidate_slots)
 
             for bi in range(batch_size):
                 if data_dev["ID"][bi] not in all_prediction.keys():
@@ -175,9 +175,9 @@ class TRADE(nn.Module):
                             if st == "none":
                                 continue
                             else:
-                                predict_belief_bsz_ptr.append(slot_temp[si] + "-" + str(st))
+                                predict_belief_bsz_ptr.append(candidate_slots[si] + "-" + str(st))
                         else:
-                            predict_belief_bsz_ptr.append(slot_temp[si] + "-" + inverse_unpoint_slot[sg.item()])
+                            predict_belief_bsz_ptr.append(candidate_slots[si] + "-" + inverse_unpoint_slot[sg.item()])
                 else:
                     for si, _ in enumerate(gate):
                         pred = np.transpose(words[si])[bi]
@@ -191,7 +191,7 @@ class TRADE(nn.Module):
                         if st == "none":
                             continue
                         else:
-                            predict_belief_bsz_ptr.append(slot_temp[si] + "-" + str(st))
+                            predict_belief_bsz_ptr.append(candidate_slots[si] + "-" + str(st))
 
                 all_prediction[data_dev["ID"][bi]][data_dev["turn_id"][bi]]["pred_bs_ptr"] = predict_belief_bsz_ptr
 
@@ -200,7 +200,7 @@ class TRADE(nn.Module):
         #     json.dump(all_prediction, open("all_prediction_{}.json".format(self.name), 'w'), indent=4)
 
         joint_acc_score_ptr, F1_score_ptr, turn_acc_score_ptr = self.evaluate_metrics(all_prediction, "pred_bs_ptr",
-                                                                                      slot_temp)
+                                                                                      candidate_slots)
 
         evaluation_metrics = {"Joint Acc": joint_acc_score_ptr, "Turn Acc": turn_acc_score_ptr,
                               "Joint F1": F1_score_ptr}
@@ -218,7 +218,7 @@ class TRADE(nn.Module):
             print("MODEL SAVED ACC-{:.4f}".format(joint_acc_score))
         return joint_acc_score
 
-    def evaluate_metrics(self, all_prediction, from_which, slot_temp):
+    def evaluate_metrics(self, all_prediction, from_which, candidate_slots):
         total, turn_acc, joint_acc, F1_pred, F1_count = 0, 0, 0, 0, 0
         for d, v in all_prediction.items():
             for t in range(len(v)):
@@ -228,7 +228,7 @@ class TRADE(nn.Module):
                 total += 1
 
                 # Compute prediction slot accuracy
-                temp_acc = self.compute_acc(set(cv["turn_belief"]), set(cv[from_which]), slot_temp)
+                temp_acc = self.compute_acc(set(cv["turn_belief"]), set(cv[from_which]), candidate_slots)
                 turn_acc += temp_acc
 
                 # Compute prediction joint F1 score
@@ -241,7 +241,7 @@ class TRADE(nn.Module):
         F1_score = F1_pred / float(F1_count) if F1_count != 0 else 0
         return joint_acc_score, F1_score, turn_acc_score
 
-    def compute_acc(self, gold, pred, slot_temp):
+    def compute_acc(self, gold, pred, candidate_slots):
         miss_gold = 0
         miss_slot = []
         for g in gold:
@@ -252,8 +252,8 @@ class TRADE(nn.Module):
         for p in pred:
             if p not in gold and p.rsplit("-", 1)[0] not in miss_slot:
                 wrong_pred += 1
-        ACC_TOTAL = len(slot_temp)
-        ACC = len(slot_temp) - miss_gold - wrong_pred
+        ACC_TOTAL = len(candidate_slots)
+        ACC = len(candidate_slots) - miss_gold - wrong_pred
         ACC = ACC / float(ACC_TOTAL)
         return ACC
 
@@ -319,10 +319,10 @@ class EncoderRNN(nn.Module):
 
 
 class Generator(nn.Module):
-    def __init__(self, index2word, shared_emb, vocab_size, hidden_size, dropout, slots, nb_gate):
+    def __init__(self, i2w, shared_emb, vocab_size, hidden_size, dropout, slots, nb_gate):
         super(Generator, self).__init__()
         self.vocab_size = vocab_size
-        self.index2word = index2word
+        self.i2w = i2w
         self.embedding = shared_emb
         self.dropout_layer = nn.Dropout(dropout)
         self.gru = nn.GRU(hidden_size, hidden_size, dropout=dropout)
@@ -345,23 +345,23 @@ class Generator(nn.Module):
         nn.init.normal_(self.slot_embedding.weight)
 
     def forward(self, batch_size, encoded_hidden, encoded_outputs, encoded_lens, story, max_res_len, target_batches,
-                use_teacher_forcing, slot_temp):
-        # all_point_outputs = torch.zeros(len(slot_temp), batch_size, max_res_len, self.vocab_size)
-        # all_gate_outputs = torch.zeros(len(slot_temp), batch_size, self.nb_gate)
+                use_teacher_forcing, candidate_slots):
+        # all_point_outputs = torch.zeros(len(candidate_slots), batch_size, max_res_len, self.vocab_size)
+        # all_gate_outputs = torch.zeros(len(candidate_slots), batch_size, self.nb_gate)
         # if USE_CUDA:
         #     all_point_outputs = all_point_outputs.cuda()
         #     all_gate_outputs = all_gate_outputs.cuda()
 
         # Get the slot embedding
-        domain_ids = list(map(lambda x: self.slot_w2i.get(x.split("-")[0], 0), slot_temp))
-        slot_ids = list(map(lambda x: self.slot_w2i.get(x.split("-")[1], 0), slot_temp))
+        domain_ids = list(map(lambda x: self.slot_w2i.get(x.split("-")[0], 0), candidate_slots))
+        slot_ids = list(map(lambda x: self.slot_w2i.get(x.split("-")[1], 0), candidate_slots))
         domain_ids = torch.LongTensor(domain_ids).cuda()
         slot_ids = torch.LongTensor(slot_ids).cuda()
         slot_embs = self.slot_embedding(domain_ids) + self.slot_embedding(slot_ids)
 
         # Compute pointer-generator output, decoding each (domain, slot) one-by-one
         # words_point_out = []
-        # for sid, slot in enumerate(slot_temp):
+        # for sid, slot in enumerate(candidate_slots):
         #     hidden = encoded_hidden
         #     words = []
         #     slot_emb = slot_embs[sid]
@@ -383,7 +383,7 @@ class Generator(nn.Module):
         #         final_p_vocab = (1 - interp) * p_context_ptr + interp * p_vocab
         #
         #         pred_word = torch.argmax(final_p_vocab, dim=1)
-        #         words.append([self.lang.index2word[w_idx.item()] for w_idx in pred_word])
+        #         words.append([self.lang.i2w[w_idx.item()] for w_idx in pred_word])
         #         all_point_outputs[sid, :, position, :] = final_p_vocab
         #         if use_teacher_forcing:
         #             decoder_input = self.embedding(target_batches[:, sid, position])  # Chosen word is next input
@@ -393,7 +393,7 @@ class Generator(nn.Module):
         #     words_point_out.append(words)
 
         all_point_outputs = []
-        num_slots = len(slot_temp)
+        num_slots = len(candidate_slots)
         _, seq_len, _ = encoded_outputs.shape
         decoder_input = self.dropout_layer(slot_embs).unsqueeze(1).expand(-1, batch_size, self.hidden_size)  # S * B * D
         decoder_input = decoder_input.reshape(-1, self.hidden_size)
@@ -415,7 +415,7 @@ class Generator(nn.Module):
             context_vec, logits, prob = self.attend(
                 expanded_encoder_outputs, hidden.squeeze(0), expanded_encoder_lengths)
             if position == 0:
-                all_gate_outputs = self.W_gate(context_vec).view((len(slot_temp), batch_size, self.nb_gate))
+                all_gate_outputs = self.W_gate(context_vec).view((len(candidate_slots), batch_size, self.nb_gate))
             p_vocab = torch.matmul(hidden.squeeze(0), self.embedding.weight.transpose(1, 0))
             p_vocab = F.softmax(p_vocab, dim=1)
 
@@ -429,7 +429,7 @@ class Generator(nn.Module):
 
             pred_word = torch.argmax(final_p_vocab, dim=1)
             words.append(pred_word.view(num_slots, batch_size).cpu())
-            # words.append([self.lang.index2word[w_idx] for w_idx in pred_word.cpu().tolist()])
+            # words.append([self.lang.i2w[w_idx] for w_idx in pred_word.cpu().tolist()])
             # all_point_outputs[:, :, position, :] = final_p_vocab.view(num_slots, batch_size, -1)
             all_point_outputs.append(final_p_vocab.view(num_slots, batch_size, -1))
             if use_teacher_forcing:
@@ -440,7 +440,7 @@ class Generator(nn.Module):
         all_point_outputs = torch.stack(all_point_outputs, dim=2)
         # words_point_out = list(map(list, zip(*words)))
         words = torch.stack(words, dim=1).tolist()
-        words = [[[self.index2word[z] for z in y] for y in x] for x in words]
+        words = [[[self.i2w[z] for z in y] for y in x] for x in words]
         return all_point_outputs, all_gate_outputs, words, []
 
     def attend(self, hiddens, query, lengths):
