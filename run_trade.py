@@ -25,7 +25,7 @@ def parse_argument():
 
 def start_train(args, model, train, dev, slot_train, slot_dev):
     curr_acc, best_acc = 0.0, 48.0
-    #curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
+    curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
     for it in range(args.epoch):
         progress_bar = tqdm(enumerate(train),total=len(train))
         for i,d in progress_bar:
@@ -58,8 +58,8 @@ def main():
         emb_path=args.embedding
     )
     if args.train:
-        start_train(args, model, train, test, SLOTS_LIST[1], SLOTS_LIST[3])
-        #start_train(args, model, test, test, SLOTS_LIST[3], SLOTS_LIST[3])
+        #start_train(args, model, train, test, SLOTS_LIST[1], SLOTS_LIST[3])
+        start_train(args, model, test, test, SLOTS_LIST[3], SLOTS_LIST[3])
     else:
         start_test(model, test, SLOTS_LIST[3])
 
