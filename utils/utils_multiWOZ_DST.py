@@ -195,7 +195,7 @@ def prepare_data_seq(args):
     file_dev = args.data_dir+'/dev_dials.json'
     file_test = args.data_dir+'/test_dials.json'
     gating_dict = {"ptr":0, "dontcare":1, "none":2}
-    with open(args.data_dir+'/candidate_slots.pkl','rb') as f:
+    with open(args.data_dir+'/all_slots.pkl','rb') as f:
         candidate_slots = pickle.load(f)
     with open(args.data_dir+'/vocab_dict.pkl', 'rb') as handle:
         i2w = pickle.load(handle)
