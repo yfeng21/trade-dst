@@ -27,8 +27,7 @@ class TRADE(nn.Module):
         self.name = "TRADE"
         self.task = task
         self.hidden_size = hidden_size
-        self.lang = lang[0]
-        self.mem_lang = lang[1]
+        self.lang = lang
         self.lr = lr
         self.dropout = dropout
         self.slots = slots[0]
