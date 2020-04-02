@@ -18,6 +18,7 @@ from tqdm import tqdm
 import os
 import pickle
 from random import shuffle
+import itertools
 
 from .fix_label import *
 
@@ -56,7 +57,7 @@ class Lang:
             self.n_words += 1
 
 
-class Dataset(data.Dataset):
+class UtteranceDataset(data.Dataset):
     """Custom data.Dataset compatible with data.DataLoader."""
     def __init__(self, data_info, src_word2id, trg_word2id, mem_word2id):
         """Reads source and target sequences from txt files."""
@@ -80,14 +81,14 @@ class Dataset(data.Dataset):
         turn_belief = self.turn_belief[index]
         gating_label = self.gating_label[index]
         turn_uttr = self.turn_uttr[index]
-        turn_domain = self.preprocess_domain(self.turn_domain[index])
+        turn_domain = self.map_domain(self.turn_domain[index])
         generate_y = self.generate_y[index]
-        generate_y = self.preprocess_slot(generate_y, self.trg_word2id)
+        generate_y = self.map_slot(generate_y, self.trg_word2id)
         context = self.dialog_history[index] 
-        context = self.preprocess(context, self.src_word2id)
+        context = self.map_utter(context, self.src_word2id)
         context_plain = self.dialog_history[index]
         
-        item_info = {
+        item = {
             "ID":ID, 
             "turn_id":turn_id, 
             "turn_belief":turn_belief, 
@@ -98,114 +99,114 @@ class Dataset(data.Dataset):
             "turn_domain":turn_domain, 
             "generate_y":generate_y, 
             }
-        return item_info
+        return item
 
     def __len__(self):
         return self.num_total_seqs
     
-    def preprocess(self, sequence, word2idx):
+    def map_utter(self, sequence, word2idx: dict):
         """Converts words to ids."""
-        story = [word2idx[word] if word in word2idx else UNK_token for word in sequence.split()]
-        story = torch.Tensor(story)
+        story = [word2idx.get(word, UNK_token) for word in sequence.split()]
         return story
 
-    def preprocess_slot(self, sequence, word2idx):
+    def map_slot(self, sequence, word2idx:dict):
         """Converts words to ids."""
         story = []
         for value in sequence:
-            v = [word2idx[word] if word in word2idx else UNK_token for word in value.split()] + [EOS_token]
+            v = [word2idx.get(word, UNK_token) for word in value.split()] + [EOS_token]
             story.append(v)
         # story = torch.Tensor(story)
         return story
+    #
+    # def preprocess_memory(self, sequence, word2idx):
+    #     """Converts words to ids."""
+    #     story = []
+    #     for value in sequence:
+    #         d, s, v = value
+    #         s = s.replace("book","").strip()
+    #         # separate each word in value to different memory slot
+    #         for wi, vw in enumerate(v.split()):
+    #             idx = [word2idx[word] if word in word2idx else UNK_token for word in [d, s, "t{}".format(wi), vw]]
+    #             story.append(idx)
+    #     story = torch.Tensor(story)
+    #     return story
 
-    def preprocess_memory(self, sequence, word2idx):
-        """Converts words to ids."""
-        story = []
-        for value in sequence:
-            d, s, v = value
-            s = s.replace("book","").strip()
-            # separate each word in value to different memory slot
-            for wi, vw in enumerate(v.split()):
-                idx = [word2idx[word] if word in word2idx else UNK_token for word in [d, s, "t{}".format(wi), vw]]
-                story.append(idx)
-        story = torch.Tensor(story)
-        return story
-
-    def preprocess_domain(self, turn_domain):
+    @staticmethod
+    def map_domain(turn_domain):
         domains = {"attraction":0, "restaurant":1, "taxi":2, "train":3, "hotel":4, "hospital":5, "bus":6, "police":7}
         return domains[turn_domain]
 
 
 def collate_fn(data):
-    def merge(sequences):
+    def sent_to_batch(sequences):
         '''
         merge from batch * sent_len to batch * max_len 
         '''
-        lengths = [len(seq) for seq in sequences]
-        max_len = 1 if max(lengths)==0 else max(lengths)
-        padded_seqs = torch.ones(len(sequences), max_len).long()
-        for i, seq in enumerate(sequences):
-            end = lengths[i]
-            padded_seqs[i, :end] = seq[:end]
-        padded_seqs = padded_seqs.detach() #torch.tensor(padded_seqs)
-        return padded_seqs, lengths
+        lengths = list(map(len, sequences))
+        max_len = max(max(lengths), 1)
+
+        padded = []
+        for i, l in enumerate(lengths):
+            padded_sent = sequences[i] + [PAD_token for _ in range(max_len - l)]
+            padded.append(padded_sent)
+
+        padded = torch.LongTensor(padded)
+        return padded, lengths
 
     def merge_multi_response(sequences):
         '''
         merge from batch * nb_slot * slot_len to batch * nb_slot * max_slot_len
         '''
-        lengths = []
-        for bsz_seq in sequences:
-            length = [len(v) for v in bsz_seq]
-            lengths.append(length)
-        max_len = max([max(l) for l in lengths])
-        padded_seqs = []
-        for bsz_seq in sequences:
-            pad_seq = []
-            for v in bsz_seq:
-                v = v + [PAD_token] * (max_len-len(v))
-                pad_seq.append(v)
-            padded_seqs.append(pad_seq)
-        padded_seqs = torch.tensor(padded_seqs)
+        lengths = [[len(s) for s in ss] for ss in sequences]
+        max_len = max(sum(lengths, []))
+        padded = []
+        for ss in sequences:
+            pp = []
+            for s in ss:
+                s = s + [PAD_token for _ in range(max_len-len(s))]
+                pp.append(s)
+            padded.append(pp)
+        padded = torch.tensor(padded)
         lengths = torch.tensor(lengths)
-        return padded_seqs, lengths
+        return padded, lengths
 
-    def merge_memory(sequences):
-        lengths = [len(seq) for seq in sequences]
-        max_len = 1 if max(lengths)==0 else max(lengths) # avoid the empty belief state issue
-        padded_seqs = torch.ones(len(sequences), max_len, 4).long()
-        for i, seq in enumerate(sequences):
-            end = lengths[i]
-            if len(seq) != 0:
-                padded_seqs[i,:end,:] = seq[:end]
-        return padded_seqs, lengths
+    # def merge_memory(sequences):
+    #     lengths = [len(seq) for seq in sequences]
+    #     max_len = 1 if max(lengths)==0 else max(lengths) # avoid the empty belief state issue
+    #     padded_seqs = torch.ones(len(sequences), max_len, 4).long()
+    #     for i, seq in enumerate(sequences):
+    #         end = lengths[i]
+    #         if len(seq) != 0:
+    #             padded_seqs[i,:end,:] = seq[:end]
+    #     return padded_seqs, lengths
   
     # sort a list by sequence length (descending order) to use pack_padded_sequence
     data.sort(key=lambda x: len(x['context']), reverse=True) 
-    item_info = {}
+    batch = {}
     for key in data[0].keys():
-        item_info[key] = [d[key] for d in data]
+        batch[key] = [d[key] for d in data]
 
     # merge sequences
-    src_seqs, src_lengths = merge(item_info['context'])
-    y_seqs, y_lengths = merge_multi_response(item_info["generate_y"])
-    gating_label = torch.tensor(item_info["gating_label"])
-    turn_domain = torch.tensor(item_info["turn_domain"])
+    src_seqs, src_lengths = sent_to_batch(batch['context'])
+    y_seqs, y_lengths = merge_multi_response(batch["generate_y"])
+    # gating_label = torch.tensor(batch["gating_label"])
+    # turn_domain = torch.tensor(batch["turn_domain"])
 
-    if USE_CUDA:
-        src_seqs = src_seqs.cuda()
-        gating_label = gating_label.cuda()
-        turn_domain = turn_domain.cuda()
-        y_seqs = y_seqs.cuda()
-        y_lengths = y_lengths.cuda()
+    src_seqs = src_seqs.cuda()
+    # gating_label = gating_label.cuda()
+    # turn_domain = turn_domain.cuda()
+    y_seqs = y_seqs.cuda()
+    y_lengths = y_lengths.cuda()
 
-    item_info["context"] = src_seqs
-    item_info["context_len"] = src_lengths
-    item_info["gating_label"] = gating_label
-    item_info["turn_domain"] = turn_domain
-    item_info["generate_y"] = y_seqs
-    item_info["y_lengths"] = y_lengths
-    return item_info
+    batch["context"] = src_seqs
+    batch["context_len"] = src_lengths
+    batch["generate_y"] = y_seqs
+    batch["y_lengths"] = y_lengths
+
+    batch["gating_label"] = torch.tensor(batch["gating_label"]).cuda()
+    batch["turn_domain"] = torch.tensor(batch["turn_domain"]).cuda()
+
+    return batch
 
 def read_langs(args: argparse.Namespace, file_name, gating_dict, SLOTS, dataset, lang, mem_lang, training, max_line = None):
     print(("Reading from {}".format(file_name)))
@@ -324,7 +325,7 @@ def get_seq(pairs, lang, mem_lang, batch_size, shuffle):
         for k in data_keys:
             data_info[k].append(pair[k]) 
 
-    dataset = Dataset(data_info, lang.word2index, lang.word2index, mem_lang.word2index)
+    dataset = UtteranceDataset(data_info, lang.word2index, lang.word2index, mem_lang.word2index)
     data_loader = torch.utils.data.DataLoader(dataset=dataset,
                                                   batch_size=batch_size,
                                                   shuffle=shuffle,

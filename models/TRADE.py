@@ -74,10 +74,10 @@ class TRADE(nn.Module):
     def reset(self):
         self.loss, self.print_every, self.loss_ptr, self.loss_gate, self.loss_class = 0, 1, 0, 0, 0
 
-    def train_batch(self, data, clip, slot_temp, reset=0):
+    def run_batch(self, data, slot_temp, reset=0):
         if reset: self.reset()
         # Zero gradients of both optimizers
-        self.optimizer.zero_grad()
+        # self.optimizer.zero_grad()
 
         # Encode and Decode
         use_teacher_forcing = random.random() < 0.5
@@ -93,14 +93,19 @@ class TRADE(nn.Module):
 
 
         loss = loss_ptr + loss_gate
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.parameters(), clip)
-        self.optimizer.step()
+        # loss.backward()
+        # torch.nn.utils.clip_grad_norm_(self.parameters(), clip)
+        # self.optimizer.step()
 
         # Update parameters with optimizers
         self.loss += loss.data
         self.loss_ptr += loss_ptr.item()
         self.loss_gate += loss_gate.item()
+
+        return loss
+
+    def clip(self, clip):
+        torch.nn.utils.clip_grad_norm_(self.parameters(), clip)
 
     def encode_and_decode(self, data, use_teacher_forcing, slot_temp):
         # Build unknown mask for memory to encourage generalization

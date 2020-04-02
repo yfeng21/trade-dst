@@ -14,6 +14,7 @@ def parse_argument():
     parser.add_argument('--hidden_size', type=int, default=400)
     # parser.add_argument('--batch_size',default=64,type=int)
     parser.add_argument('--lr',default=0.001,type=float)
+    parser.add_argument('--gradient_accum_steps', type=int, default=1)
     parser.add_argument('--save_path')
 
     parser.add_argument('--all_vocab', type=bool, default=True)
@@ -25,13 +26,21 @@ def parse_argument():
 
 def start_train(args, model, train, dev, slot_train, slot_dev):
     curr_acc, best_acc = 0.0, 48.0
-    curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
+    # curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
     for it in range(args.epoch):
         progress_bar = tqdm(enumerate(train),total=len(train))
         for i,d in progress_bar:
-            model.train_batch(d, 1, slot_train, reset=(i==0))
+            loss = model.run_batch(d, slot_train, reset=(i==0))
+            if args.gradient_accum_steps > 1:
+                loss = loss / args.gradient_accum_steps
+            loss.backward()
             # model.optimize(1.0)
+            if (i+1) % args.gradient_accum_steps == 0:
+                model.clip(1.0)
+                model.optimizer.step()
+                model.optimizer.zero_grad()
             progress_bar.set_description(model.print_loss())
+
         curr_acc = model.evaluate(dev, best_acc, slot_dev, None)
         model.scheduler.step(curr_acc)
         if curr_acc >= best_acc:
@@ -59,7 +68,7 @@ def main():
     )
     if args.train:
         #start_train(args, model, train, test, SLOTS_LIST[1], SLOTS_LIST[3])
-        start_train(args, model, test, test, SLOTS_LIST[3], SLOTS_LIST[3])
+        start_train(args, model, train, test, SLOTS_LIST[3], SLOTS_LIST[3])
     else:
         start_test(model, test, SLOTS_LIST[3])
 
