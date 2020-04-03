@@ -1,31 +1,12 @@
 import json
 import torch
-import torch.utils.data as data
-import unicodedata
-import string
-import re
-import random
-import time
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from utils.config import *
-import ast
-from collections import Counter
-from collections import OrderedDict
-from tqdm import tqdm
-import os
 import pickle
-from random import shuffle
-import itertools
 
 from .fix_label import *
 
 
-class UtteranceDataset(data.Dataset):
-    """Custom data.Dataset compatible with data.DataLoader."""
-
+class UtteranceDataset(torch.utils.data.Dataset):
     def __init__(self, data_info, src_word2id):
         """Reads source and target sequences from txt files."""
         self.ID = data_info['ID']
@@ -79,9 +60,6 @@ class UtteranceDataset(data.Dataset):
 
 def collate_fn(data):
     def sent_to_batch(sequences):
-        '''
-        merge from batch * sent_len to batch * max_len 
-        '''
         lengths = list(map(len, sequences))
         max_len = max(max(lengths), 1)
 
@@ -93,10 +71,7 @@ def collate_fn(data):
         padded = torch.LongTensor(padded)
         return padded, lengths
 
-    def merge_multi_response(sequences):
-        '''
-        merge from batch * nb_slot * slot_len to batch * nb_slot * max_slot_len
-        '''
+    def slot_values_to_batch(sequences):
         lengths = [[len(s) for s in ss] for ss in sequences]
         max_len = max(sum(lengths, []))
         padded = []
@@ -118,7 +93,7 @@ def collate_fn(data):
 
     # merge sequences
     src_seqs, src_lengths = sent_to_batch(batch['context'])
-    y_seqs, y_lengths = merge_multi_response(batch["generate_y"])
+    y_seqs, y_lengths = slot_values_to_batch(batch["generate_y"])
 
     src_seqs = src_seqs.cuda()
     y_seqs = y_seqs.cuda()
