@@ -9,9 +9,6 @@ import numpy as np
 import os
 from tqdm import tqdm
 
-from utils.masked_cross_entropy import masked_cross_entropy_for_value
-from utils.config import *
-
 
 class TRADE(nn.Module):
     def __init__(self, hidden_size, w2i, i2w, path, lr, dropout, slots, gating_dict, emb_path=None):
@@ -105,30 +102,30 @@ class TRADE(nn.Module):
             teacher_forcing, slots)
         return all_outputs
 
-    def evaluate(self, eval_data, best, slots):
+    def evaluate(self, eval_data, best_joint, slots):
         self.encoder.eval()
         self.decoder.eval()
         print("EVALUATION")
-        all_prediction = {}
-        inverse_unpoint_slot = dict([(v, k) for k, v in self.gating_dict.items()])
+        model_predictions = {}
+        inverse_gating_dict = dict([(v, k) for k, v in self.gating_dict.items()])
         pbar = tqdm(enumerate(eval_data), total=len(eval_data))
-        for j, data_dev in pbar:
-            batch_size = len(data_dev['context_len'])
-            _, gates, words, class_words = self.run_encoder_decoder(data_dev, False, slots)
+        for j, eval_data in pbar:
+            batch_size = len(eval_data['context_len'])
+            _, gates, words_point_out, words_class_out = self.run_encoder_decoder(eval_data, False, slots)
 
-            for bi in range(batch_size):
-                if data_dev["ID"][bi] not in all_prediction.keys():
-                    all_prediction[data_dev["ID"][bi]] = {}
-                all_prediction[data_dev["ID"][bi]][data_dev["turn_id"][bi]] = {
-                    "turn_belief": data_dev["turn_belief"][bi]}
-                predict_belief_bsz_ptr, predict_belief_bsz_class = [], []
-                gate = torch.argmax(gates.transpose(0, 1)[bi], dim=1)
+            for b in range(batch_size):
+                if eval_data["ID"][b] not in model_predictions.keys():
+                    model_predictions[eval_data["ID"][b]] = {}
+                model_predictions[eval_data["ID"][b]][eval_data["turn_id"][b]] = {
+                    "turn_belief": eval_data["turn_belief"][b]}
+                b_model_prediction = []
+                gate = torch.argmax(gates.transpose(0, 1)[b], dim=1)
 
-                for si, sg in enumerate(gate):
-                    if sg == self.gating_dict["none"]:
+                for slot_index, gate_index in enumerate(gate):
+                    if gate_index == self.gating_dict["none"]:
                         continue
-                    elif sg == self.gating_dict["ptr"]:
-                        pred = np.transpose(words[si])[bi]
+                    elif gate_index == self.gating_dict["ptr"]:
+                        pred = np.transpose(words_point_out[slot_index])[b]
                         st = []
                         for e in pred:
                             if e == 'EOS':
@@ -139,49 +136,37 @@ class TRADE(nn.Module):
                         if st == "none":
                             continue
                         else:
-                            predict_belief_bsz_ptr.append(slots[si] + "-" + str(st))
+                            b_model_prediction.append(slots[slot_index] + "-" + str(st))
                     else:
-                        predict_belief_bsz_ptr.append(slots[si] + "-" + inverse_unpoint_slot[sg.item()])
+                        b_model_prediction.append(slots[slot_index] + "-" + inverse_gating_dict[gate_index.item()])
+                model_predictions[eval_data["ID"][b]][eval_data["turn_id"][b]]["pred_bs_ptr"] = b_model_prediction
 
-                all_prediction[data_dev["ID"][bi]][data_dev["turn_id"][bi]]["pred_bs_ptr"] = predict_belief_bsz_ptr
+        joint_acc, slot_acc = self.evaluate_metrics(model_predictions, slots)
+        print("Joint Acc:{:.4f}, slot Acc:{:.4f}".format(joint_acc,slot_acc))
 
-        joint_acc, F1_score_ptr, turn_acc_score_ptr = self.evaluate_metrics(all_prediction, "pred_bs_ptr", slots)
-
-        evaluation_metrics = {"Joint Acc": joint_acc, "Turn Acc": turn_acc_score_ptr,
-                              "Joint F1": F1_score_ptr}
-        print(evaluation_metrics)
-
-        # Set back to training mode
         self.encoder.train()
         self.decoder.train()
 
-        if (joint_acc >= best):
+        if (joint_acc >= best_joint):
             self.save_model()
-            print("SAVED ACC-{:.4f}".format(joint_acc))
+            print("Best model with joint accuracy={:.4f} saved".format(joint_acc))
         return joint_acc
 
-    def evaluate_metrics(self, predictions, from_which, slots):
-        total, turn_acc, joint_acc, F1_pred, F1_count = 0, 0, 0, 0, 0
-        for d, v in predictions.items():
-            for t in range(len(v)):
-                cv = v[t]
-                if set(cv["turn_belief"]) == set(cv[from_which]):
+
+    def evaluate_metrics(self, predictions, slots):
+        total, slot_acc, joint_acc = 0, 0, 0
+        for _, pred in predictions.items():
+            for i in range(len(pred)):
+                curr_pred = pred[i]
+                if set(curr_pred["turn_belief"]) == set(curr_pred["pred_bs_ptr"]):
                     joint_acc += 1
                 total += 1
-
-                # Compute prediction slot accuracy
-                temp_acc = self.compute_acc(set(cv["turn_belief"]), set(cv[from_which]), slots)
-                turn_acc += temp_acc
-
-                # Compute prediction joint F1 score
-                temp_f1, temp_r, temp_p, count = self.compute_prf(set(cv["turn_belief"]), set(cv[from_which]))
-                F1_pred += temp_f1
-                F1_count += count
+                temp_acc = self.compute_acc(set(curr_pred["turn_belief"]), set(curr_pred["pred_bs_ptr"]), slots)
+                slot_acc += temp_acc
 
         joint_acc_score = joint_acc / float(total) if total != 0 else 0
-        turn_acc_score = turn_acc / float(total) if total != 0 else 0
-        F1_score = F1_pred / float(F1_count) if F1_count != 0 else 0
-        return joint_acc_score, F1_score, turn_acc_score
+        slot_acc_score = slot_acc / float(total) if total != 0 else 0
+        return joint_acc_score, slot_acc_score
 
     def compute_acc(self, gold, predictions, slots):
         missed = 0
@@ -194,31 +179,8 @@ class TRADE(nn.Module):
         for p in predictions:
             if p not in gold and p.rsplit("-", 1)[0] not in missed_slots:
                 wrong_pred += 1
-        n_slots = len(slots)
         acc = len(slots) - missed - wrong_pred
-        return acc / float(n_slots)
-
-    def compute_prf(self, reference, predictions):
-        TP, FP, FN = 0, 0, 0
-        if len(reference) != 0:
-            count = 1
-            for g in reference:
-                if g in predictions:
-                    TP += 1
-                else:
-                    FN += 1
-            for p in predictions:
-                if p not in reference:
-                    FP += 1
-            precision = TP / float(TP + FP) if (TP + FP) != 0 else 0
-            recall = TP / float(TP + FN) if (TP + FN) != 0 else 0
-            F1 = 2 * precision * recall / float(precision + recall) if (precision + recall) != 0 else 0
-        else:
-            if len(predictions) == 0:
-                precision, recall, F1, count = 1, 1, 1, 1
-            else:
-                precision, recall, F1, count = 0, 0, 0, 1
-        return F1, recall, precision, count
+        return acc / float(len(slots))
 
 
 class EncoderRNN(nn.Module):
@@ -237,10 +199,10 @@ class EncoderRNN(nn.Module):
             self.embedding = nn.Embedding.from_pretrained(
                 torch.tensor(weights),
                 freeze=False,
-                padding_idx=PAD_token
+                padding_idx=1
             )
         else:
-            self.embedding = nn.Embedding(vocab_size, hidden_size, padding_idx=PAD_token)
+            self.embedding = nn.Embedding(vocab_size, hidden_size, padding_idx=1)
             nn.init.normal_(self.embedding.weight, 0., 0.1)
 
     def forward(self, input_seqs, input_lengths=None, hidden=None):
@@ -341,3 +303,20 @@ class Generator(nn.Module):
         scores = F.softmax(unnormalized_scores, dim=1)  # B * L
         context = torch.bmm(scores.unsqueeze(1), hiddens).squeeze(1)
         return context, unnormalized_scores, scores
+
+def masked_cross_entropy_for_value(logits, target, mask):
+    logits_flat = logits.view(-1, logits.size(-1))
+    log_probs_flat = torch.log(logits_flat)
+    target_flat = target.view(-1, 1)
+    losses_flat = -torch.gather(log_probs_flat, dim=1, index=target_flat)
+    losses = losses_flat.view(*target.size()) # b * |s| * m
+    loss = masking(losses, mask)
+    return loss
+
+def masking(losses, mask):
+    batch_size, num_slots, seq_len = losses.shape
+    seq_mask = torch.arange(0, seq_len).long().unsqueeze(0).unsqueeze(0).expand(batch_size, num_slots, -1)  # B * S * L
+    seq_mask = seq_mask.cuda() < mask.unsqueeze(-1)
+    losses = losses * seq_mask.float()
+    loss = losses.sum() / (seq_mask.sum().float())
+    return loss
