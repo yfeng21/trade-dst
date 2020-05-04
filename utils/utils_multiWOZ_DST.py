@@ -14,7 +14,7 @@ from utils.config import *
 import ast
 from collections import Counter
 from collections import OrderedDict
-from embeddings import GloveEmbedding, KazumaCharEmbedding
+# from embeddings import GloveEmbedding, KazumaCharEmbedding
 from tqdm import tqdm
 import os
 import pickle
@@ -64,7 +64,7 @@ class Dataset(data.Dataset):
         self.ID = data_info['ID']
         self.turn_domain = data_info['turn_domain']
         self.turn_id = data_info['turn_id']
-        self.dialog_history = data_info['dialog_history']
+        self.dialog_history = data_info['dialog_history'] #now a list
         self.turn_belief = data_info['turn_belief']
         self.gating_label = data_info['gating_label']
         self.turn_uttr = data_info['turn_uttr']
@@ -94,8 +94,8 @@ class Dataset(data.Dataset):
             "turn_id":turn_id, 
             "turn_belief":turn_belief, 
             "gating_label":gating_label, 
-            "context":context, 
-            "context_plain":context_plain, 
+            "context":context, #list of tensors
+            "context_plain":context_plain, #list of utterances
             "turn_uttr_plain":turn_uttr, 
             "turn_domain":turn_domain, 
             "generate_y":generate_y, 
@@ -105,11 +105,15 @@ class Dataset(data.Dataset):
     def __len__(self):
         return self.num_total_seqs
     
-    def preprocess(self, sequence, word2idx):
+    def preprocess(self, sequence_list, word2idx):
         """Converts words to ids."""
-        story = [word2idx[word] if word in word2idx else UNK_token for word in sequence.split()]
-        story = torch.Tensor(story)
-        return story
+        story_list = []
+        for sequence in sequence_list:
+            story = [word2idx[word] if word in word2idx else UNK_token for word in sequence.split()]
+            story = torch.Tensor(story)
+            story_list.append(story)
+        story_list = nn.utils.rnn.pad_sequence(story_list, batch_first=True, padding_value=0)
+        return story_list
 
     def preprocess_slot(self, sequence, word2idx):
         """Converts words to ids."""
@@ -229,7 +233,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
         
         cnt_lin = 1
         for dial_dict in dials:
-            dialog_history = ""
+            dialog_history = []
             last_belief_dict = {}
             # Filtering and counting domains
             for domain in dial_dict["domains"]:
@@ -252,8 +256,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                 turn_id = turn["turn_idx"]
                 turn_uttr = turn["system_transcript"] + " ; " + turn["transcript"]
                 turn_uttr_strip = turn_uttr.strip()
-                dialog_history +=  (turn["system_transcript"] + " ; " + turn["transcript"] + " ; ")
-                source_text = dialog_history.strip()
+                dialog_history.append(turn_uttr_strip)
                 turn_belief_dict = fix_general_label_error(turn["belief_state"], False, SLOTS)
 
                 # Generate domain-dependent slot list
@@ -303,7 +306,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                     "domains":dial_dict["domains"], 
                     "turn_domain":turn_domain,
                     "turn_id":turn_id, 
-                    "dialog_history":source_text, 
+                    "dialog_history":dialog_history,
                     "turn_belief":turn_belief_list,
                     "gating_label":gating_label, 
                     "turn_uttr":turn_uttr_strip, 
@@ -311,8 +314,8 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                     }
                 data.append(data_detail)
                 
-                if max_resp_len < len(source_text.split()):
-                    max_resp_len = len(source_text.split())
+                if max_resp_len < len(dialog_history):
+                    max_resp_len = len(dialog_history)
                 
             cnt_lin += 1
             if(max_line and cnt_lin>=max_line):
@@ -357,18 +360,18 @@ def get_seq(pairs, lang, mem_lang, batch_size, type, sequicity):
     return data_loader
 
 
-def dump_pretrained_emb(word2index, index2word, dump_path):
-    print("Dumping pretrained embeddings...")
-    embeddings = [GloveEmbedding(), KazumaCharEmbedding()]
-    E = []
-    for i in tqdm(range(len(word2index.keys()))):
-        w = index2word[i]
-        e = []
-        for emb in embeddings:
-            e += emb.emb(w, default='zero')
-        E.append(e)
-    with open(dump_path, 'wt') as f:
-        json.dump(E, f)
+# def dump_pretrained_emb(word2index, index2word, dump_path):
+#     print("Dumping pretrained embeddings...")
+#     embeddings = [GloveEmbedding(), KazumaCharEmbedding()]
+#     E = []
+#     for i in tqdm(range(len(word2index.keys()))):
+#         w = index2word[i]
+#         e = []
+#         for emb in embeddings:
+#             e += emb.emb(w, default='zero')
+#         E.append(e)
+#     with open(dump_path, 'wt') as f:
+#         json.dump(E, f)
 
 
 def get_slot_information(ontology):
@@ -422,8 +425,8 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
             with open(folder_name+mem_lang_name, 'wb') as handle: 
                 pickle.dump(mem_lang, handle)
         emb_dump_path = 'data/emb{}.json'.format(len(lang.index2word))
-        if not os.path.exists(emb_dump_path) and args["load_embedding"]:
-            dump_pretrained_emb(lang.word2index, lang.index2word, emb_dump_path)
+        # if not os.path.exists(emb_dump_path) and args["load_embedding"]:
+        #     dump_pretrained_emb(lang.word2index, lang.index2word, emb_dump_path)
     else:
         with open(folder_name+lang_name, 'rb') as handle:
             lang = pickle.load(handle)
