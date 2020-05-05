@@ -14,15 +14,18 @@ from utils.config import *
 import ast
 from collections import Counter
 from collections import OrderedDict
-# from embeddings import GloveEmbedding, KazumaCharEmbedding
+from embeddings import GloveEmbedding, KazumaCharEmbedding
 from tqdm import tqdm
 import os
 import pickle
 from random import shuffle
 
 from .fix_label import *
+from transformers import BertTokenizer
 
 EXPERIMENT_DOMAINS = ["hotel", "train", "restaurant", "attraction", "taxi"]
+
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
 class Lang:
     def __init__(self):
@@ -85,7 +88,8 @@ class Dataset(data.Dataset):
         turn_domain = self.preprocess_domain(self.turn_domain[index])
         generate_y = self.generate_y[index]
         generate_y = self.preprocess_slot(generate_y, self.trg_word2id)
-        context = self.dialog_history[index] 
+        context = self.dialog_history[index]
+        bert_context, bert_mask = self.preprocess_for_bert(context)
         context = self.preprocess(context, self.src_word2id)
         context_plain = self.dialog_history[index]
         
@@ -94,7 +98,9 @@ class Dataset(data.Dataset):
             "turn_id":turn_id, 
             "turn_belief":turn_belief, 
             "gating_label":gating_label, 
-            "context":context, #list of tensors
+            "context":context,
+            "bert_mask": bert_mask,
+            "bert_context": bert_context,
             "context_plain":context_plain, #list of utterances
             "turn_uttr_plain":turn_uttr, 
             "turn_domain":turn_domain, 
@@ -107,13 +113,24 @@ class Dataset(data.Dataset):
     
     def preprocess(self, sequence_list, word2idx):
         """Converts words to ids."""
+        sequence = "".join(sequence_list)
+        story = [word2idx[word] if word in word2idx else UNK_token for word in sequence.split()]
+        story = torch.Tensor(story)
+        return story
+
+    def preprocess_for_bert(self, sequence_list):
+        """Converts words to ids."""
         story_list = []
         for sequence in sequence_list:
-            story = [word2idx[word] if word in word2idx else UNK_token for word in sequence.split()]
-            story = torch.Tensor(story)
-            story_list.append(story)
-        story_list = nn.utils.rnn.pad_sequence(story_list, batch_first=True, padding_value=0)
-        return story_list
+            # story = [word2idx[word] if word in word2idx else UNK_token for word in sequence.split()]
+            # story = torch.Tensor(story)
+            story = tokenizer.encode(sequence)
+            story_list.append(torch.tensor(story))
+        lengths = [len(x) for x in story_list]
+        story_list = nn.utils.rnn.pad_sequence(story_list, batch_first=True, padding_value=0)  # L_d * 768
+        max_len = story_list.size(1)
+        mask = torch.tensor([[1 if i < lengths[u] else 0 for i in range(max_len)] for u in range(len(lengths))])
+        return story_list, mask
 
     def preprocess_slot(self, sequence, word2idx):
         """Converts words to ids."""
@@ -124,23 +141,25 @@ class Dataset(data.Dataset):
         # story = torch.Tensor(story)
         return story
 
-    def preprocess_memory(self, sequence, word2idx):
-        """Converts words to ids."""
-        story = []
-        for value in sequence:
-            d, s, v = value
-            s = s.replace("book","").strip()
-            # separate each word in value to different memory slot
-            for wi, vw in enumerate(v.split()):
-                idx = [word2idx[word] if word in word2idx else UNK_token for word in [d, s, "t{}".format(wi), vw]]
-                story.append(idx)
-        story = torch.Tensor(story)
-        return story
+    # def preprocess_memory(self, sequence, word2idx):
+    #     """Converts words to ids."""
+    #     story = []
+    #     for value in sequence:
+    #         d, s, v = value
+    #         s = s.replace("book","").strip()
+    #         # separate each word in value to different memory slot
+    #         for wi, vw in enumerate(v.split()):
+    #             idx = [word2idx[word] if word in word2idx else UNK_token for word in [d, s, "t{}".format(wi), vw]]
+    #             story.append(idx)
+    #     story = torch.Tensor(story)
+    #     return story
 
     def preprocess_domain(self, turn_domain):
         domains = {"attraction":0, "restaurant":1, "taxi":2, "train":3, "hotel":4, "hospital":5, "bus":6, "police":7}
         return domains[turn_domain]
 
+def iter_to_cuda(xx):
+    return [x.cuda() for x in xx]
 
 def collate_fn(data):
     def merge(sequences):
@@ -176,15 +195,15 @@ def collate_fn(data):
         lengths = torch.tensor(lengths)
         return padded_seqs, lengths
 
-    def merge_memory(sequences):
-        lengths = [len(seq) for seq in sequences]
-        max_len = 1 if max(lengths)==0 else max(lengths) # avoid the empty belief state issue
-        padded_seqs = torch.ones(len(sequences), max_len, 4).long()
-        for i, seq in enumerate(sequences):
-            end = lengths[i]
-            if len(seq) != 0:
-                padded_seqs[i,:end,:] = seq[:end]
-        return padded_seqs, lengths
+    # def merge_memory(sequences):
+    #     lengths = [len(seq) for seq in sequences]
+    #     max_len = 1 if max(lengths)==0 else max(lengths) # avoid the empty belief state issue
+    #     padded_seqs = torch.ones(len(sequences), max_len, 4).long()
+    #     for i, seq in enumerate(sequences):
+    #         end = lengths[i]
+    #         if len(seq) != 0:
+    #             padded_seqs[i,:end,:] = seq[:end]
+    #     return padded_seqs, lengths
   
     # sort a list by sequence length (descending order) to use pack_padded_sequence
     data.sort(key=lambda x: len(x['context']), reverse=True) 
@@ -198,12 +217,14 @@ def collate_fn(data):
     gating_label = torch.tensor(item_info["gating_label"])
     turn_domain = torch.tensor(item_info["turn_domain"])
 
-    if USE_CUDA:
-        src_seqs = src_seqs.cuda()
-        gating_label = gating_label.cuda()
-        turn_domain = turn_domain.cuda()
-        y_seqs = y_seqs.cuda()
-        y_lengths = y_lengths.cuda()
+    # if USE_CUDA:
+    #     src_seqs = src_seqs.cuda()
+    #     gating_label = gating_label.cuda()
+    #     turn_domain = turn_domain.cuda()
+    #     y_seqs = y_seqs.cuda()
+    #     y_lengths = y_lengths.cuda()
+    #     item_info["bert_context"] = iter_to_cuda(item_info.pop("bert_context"))
+    #     item_info["bert_mask"] = iter_to_cuda(item_info.pop("bert_mask"))
 
     item_info["context"] = src_seqs
     item_info["context_len"] = src_lengths
@@ -356,22 +377,23 @@ def get_seq(pairs, lang, mem_lang, batch_size, type, sequicity):
         data_loader = torch.utils.data.DataLoader(dataset=dataset,
                                                   batch_size=batch_size,
                                                   shuffle=type,
-                                                  collate_fn=collate_fn)
+                                                  collate_fn=collate_fn,
+                                                  num_workers=4)
     return data_loader
 
 
-# def dump_pretrained_emb(word2index, index2word, dump_path):
-#     print("Dumping pretrained embeddings...")
-#     embeddings = [GloveEmbedding(), KazumaCharEmbedding()]
-#     E = []
-#     for i in tqdm(range(len(word2index.keys()))):
-#         w = index2word[i]
-#         e = []
-#         for emb in embeddings:
-#             e += emb.emb(w, default='zero')
-#         E.append(e)
-#     with open(dump_path, 'wt') as f:
-#         json.dump(E, f)
+def dump_pretrained_emb(word2index, index2word, dump_path):
+    print("Dumping pretrained embeddings...")
+    embeddings = [GloveEmbedding(), KazumaCharEmbedding()]
+    E = []
+    for i in tqdm(range(len(word2index.keys()))):
+        w = index2word[i]
+        e = []
+        for emb in embeddings:
+            e += emb.emb(w, default='zero')
+        E.append(e)
+    with open(dump_path, 'wt') as f:
+        json.dump(E, f)
 
 
 def get_slot_information(ontology):
@@ -425,8 +447,8 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
             with open(folder_name+mem_lang_name, 'wb') as handle: 
                 pickle.dump(mem_lang, handle)
         emb_dump_path = 'data/emb{}.json'.format(len(lang.index2word))
-        # if not os.path.exists(emb_dump_path) and args["load_embedding"]:
-        #     dump_pretrained_emb(lang.word2index, lang.index2word, emb_dump_path)
+        if not os.path.exists(emb_dump_path) and args["load_embedding"]:
+            dump_pretrained_emb(lang.word2index, lang.index2word, emb_dump_path)
     else:
         with open(folder_name+lang_name, 'rb') as handle:
             lang = pickle.load(handle)
