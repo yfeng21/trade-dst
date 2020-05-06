@@ -212,7 +212,7 @@ def collate_fn(data):
     item_info["y_lengths"] = y_lengths
     return item_info
 
-def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity, training, ontology,max_line = None):
+def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity, training, ALL_SLOTS_ontology_list,max_line = None):
     print(("Reading from {}".format(file_name)))
     data = []
     max_resp_len, max_value_len = 0, 0
@@ -277,8 +277,8 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                         turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["only_domain"] in k])
 
                 turn_belief_list = [str(k)+'-'+str(v) for k, v in turn_belief_dict.items()]
-                turn_belief_ontology_list = [ontology["-".join(tb.rsplit("-")[:2])] for tb in turn_belief_list]
-
+                # turn_belief_ontology_list = [ontology["-".join(tb.rsplit("-")[:2])] for tb in turn_belief_list]
+                turn_belief_ontology_list = ALL_SLOTS_ontology_list
                 if (args["all_vocab"] or dataset=="train") and training:
                     mem_lang.index_words(turn_belief_dict, 'belief')
 
@@ -404,6 +404,8 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
             space_handle[k.replace(" ", "").lower()] = k
     for k in space_handle:
         ontology[k] = ontology[space_handle[k]]
+
+    ALL_SLOTS_ontology_list = [ontology[tb] for tb in ALL_SLOTS]
     gating_dict = {"ptr":0, "dontcare":1, "none":2}
     # Vocabulary
     lang, mem_lang = Lang(), Lang()
@@ -413,12 +415,12 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
     mem_lang_name = 'mem-lang-all.pkl' if args["all_vocab"] else 'mem-lang-train.pkl'
 
     if training:
-        pair_train, train_max_len, slot_train = read_langs(file_train, gating_dict, ALL_SLOTS, "train", lang, mem_lang, sequicity, training, ontology)
+        pair_train, train_max_len, slot_train = read_langs(file_train, gating_dict, ALL_SLOTS, "train", lang, mem_lang, sequicity, training, ALL_SLOTS_ontology_list)
         train = get_seq(pair_train, lang, mem_lang, batch_size, True, sequicity)
         nb_train_vocab = lang.n_words
-        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training, ontology)
+        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training, ALL_SLOTS_ontology_list)
         dev   = get_seq(pair_dev, lang, mem_lang, eval_batch, False, sequicity)
-        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, sequicity, training, ontology)
+        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, sequicity, training, ALL_SLOTS_ontology_list)
         test  = get_seq(pair_test, lang, mem_lang, eval_batch, False, sequicity)
         if os.path.exists(folder_name+lang_name) and os.path.exists(folder_name+mem_lang_name):
             print("[Info] Loading saved lang files...")
@@ -442,9 +444,9 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
             mem_lang = pickle.load(handle)
 
         pair_train, train_max_len, slot_train, train, nb_train_vocab = [], 0, {}, [], 0
-        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training, ontology)
+        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training, ALL_SLOTS_ontology_list)
         dev   = get_seq(pair_dev, lang, mem_lang, eval_batch, False, sequicity)
-        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, sequicity, training, ontology)
+        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, sequicity, training, ALL_SLOTS_ontology_list)
         test  = get_seq(pair_test, lang, mem_lang, eval_batch, False, sequicity)
 
     test_4d = []
