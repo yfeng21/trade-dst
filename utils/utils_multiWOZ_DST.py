@@ -301,7 +301,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                         turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["only_domain"] in k])
 
                 turn_belief_list = [str(k)+'-'+str(v) for k, v in turn_belief_dict.items()]
-                turn_belief_ontology_list = [ontology["-".join(tb.rsplit("-")[:-1])] for tb in turn_belief_list]
+                turn_belief_ontology_list = [ontology["-".join(tb.rsplit("-")[:2])] for tb in turn_belief_list]
 
                 if (args["all_vocab"] or dataset=="train") and training:
                     mem_lang.index_words(turn_belief_dict, 'belief')
@@ -422,11 +422,13 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
         os.makedirs(folder_name)
     # load domain-slot pairs from ontology
     ontology = json.load(open("data/multi-woz/MULTIWOZ2 2/ontology.json", 'r'))
+    ALL_SLOTS = get_slot_information(ontology)
+    space_handle = {}
     for k in ontology:
         if " " in k and "book" not in k:
-            ontology[k.replace(" ", "").lower()] = ontology[k]
-            del ontology[k]
-    ALL_SLOTS = get_slot_information(ontology)
+            space_handle[k.replace(" ", "").lower()] = k
+    for k in space_handle:
+            ontology[k] = ontology[space_handle[k]]
     gating_dict = {"ptr":0, "dontcare":1, "none":2}
     # Vocabulary
     lang, mem_lang = Lang(), Lang()
