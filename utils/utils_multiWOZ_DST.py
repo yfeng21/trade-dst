@@ -19,11 +19,15 @@ from tqdm import tqdm
 import os
 import pickle
 from random import shuffle
+from create_data import *
 
 from .fix_label import *
 
 EXPERIMENT_DOMAINS = ["hotel", "train", "restaurant", "attraction", "taxi"]
-
+GENERAL_TYPO = {
+        # type
+        "arbury lodge guest house":"arbury lodge guesthouse",
+        }
 class Lang:
     def __init__(self):
         self.word2index = {}
@@ -212,11 +216,22 @@ def collate_fn(data):
     item_info["y_lengths"] = y_lengths
     return item_info
 
+
+def check_cheating(turn_belief_dict,ALL_SLOTS_ontology_list):
+    for k, v in turn_belief_dict.items():
+        if (k == "hotel-name" and v not in ALL_SLOTS_ontology_list[22]) or (
+                k == "restaurant-name" and v not in ALL_SLOTS_ontology_list[20]) or (
+                k == "attraction-name" and v not in ALL_SLOTS_ontology_list[19]):
+            if v!="dontcare":
+                print("Oops, caught cheating value {}".format(v))
+
+
 def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity, training, ALL_SLOTS_ontology_list,max_line = None):
     print(("Reading from {}".format(file_name)))
     data = []
     max_resp_len, max_value_len = 0, 0
-    domain_counter = {} 
+    domain_counter = {}
+    uncaught = set()
     with open(file_name) as f:
         dials = json.load(f)
         # create vocab first 
@@ -248,7 +263,6 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
             if (args["except_domain"] != "" and dataset == "test" and args["except_domain"] not in dial_dict["domains"]) or \
                (args["except_domain"] != "" and dataset != "test" and [args["except_domain"]] == dial_dict["domains"]): 
                 continue
-
             # Reading data
             for ti, turn in enumerate(dial_dict["dialogue"]):
                 turn_domain = turn["domain"]
@@ -277,6 +291,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                         turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["only_domain"] in k])
 
                 turn_belief_list = [str(k)+'-'+str(v) for k, v in turn_belief_dict.items()]
+                # check_cheating(turn_belief_dict,ALL_SLOTS_ontology_list)
                 # turn_belief_ontology_list = [ontology["-".join(tb.rsplit("-")[:2])] for tb in turn_belief_list]
                 turn_belief_ontology_list = ALL_SLOTS_ontology_list
                 if (args["all_vocab"] or dataset=="train") and training:
@@ -382,6 +397,27 @@ def get_slot_information(ontology):
     return SLOTS
 
 
+def manipulate_ontology_value_list(ontology, ALL_SLOTS):
+    space_handle = {}
+    for k in ontology:
+        if " " in k and "book" not in k:
+            space_handle[k.replace(" ", "").lower()] = k
+    for k in space_handle:
+        ontology[k] = ontology[space_handle[k]]
+    ALL_SLOTS_ontology_list = []
+    for tb in ALL_SLOTS:
+        cleaned_val = []
+        for i in ontology[tb]:
+            if i != 'do n\'t care':
+                normalized_i = normalize(i, False)
+                if normalized_i in GENERAL_TYPO.keys():
+                    normalized_i = normalized_i.replace(normalized_i,GENERAL_TYPO[normalized_i])
+            cleaned_val.append(normalized_i)
+        ALL_SLOTS_ontology_list.append(cleaned_val)
+    ALL_SLOTS_ontology_list[22].append("ashley") #don't know why there is an extra ground truth
+    return ALL_SLOTS_ontology_list
+
+
 def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
     eval_batch = args["eval_batch"] if args["eval_batch"] else batch_size
     file_train = 'data/train_dials.json'
@@ -398,16 +434,7 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
     # load domain-slot pairs from ontology
     ontology = json.load(open("data/multi-woz/MULTIWOZ2 2/ontology.json", 'r'))
     ALL_SLOTS = get_slot_information(ontology)
-    space_handle = {}
-    for k in ontology:
-        if " " in k and "book" not in k:
-            space_handle[k.replace(" ", "").lower()] = k
-    for k in space_handle:
-        ontology[k] = ontology[space_handle[k]]
-    ALL_SLOTS_ontology_list = []
-    for tb in ALL_SLOTS:
-        cleaned_val = [i for i in ontology[tb] if i != 'do n\'t care']
-        ALL_SLOTS_ontology_list.append(cleaned_val)
+    ALL_SLOTS_ontology_list = manipulate_ontology_value_list(ontology,ALL_SLOTS)
     gating_dict = {"ptr":0, "dontcare":1, "none":2}
     # Vocabulary
     lang, mem_lang = Lang(), Lang()
