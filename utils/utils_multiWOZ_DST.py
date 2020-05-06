@@ -66,6 +66,7 @@ class Dataset(data.Dataset):
         self.turn_id = data_info['turn_id']
         self.dialog_history = data_info['dialog_history']
         self.turn_belief = data_info['turn_belief']
+        self.turn_ontology = data_info["turn_ontology"]
         self.gating_label = data_info['gating_label']
         self.turn_uttr = data_info['turn_uttr']
         self.generate_y = data_info["generate_y"]
@@ -82,6 +83,7 @@ class Dataset(data.Dataset):
         turn_belief = self.turn_belief[index]
         gating_label = self.gating_label[index]
         turn_uttr = self.turn_uttr[index]
+        turn_ontology = self.turn_ontology[index]
         turn_domain = self.preprocess_domain(self.turn_domain[index])
         generate_y = self.generate_y[index]
         generate_y = self.preprocess_slot(generate_y, self.trg_word2id)
@@ -92,7 +94,8 @@ class Dataset(data.Dataset):
         item_info = {
             "ID":ID, 
             "turn_id":turn_id, 
-            "turn_belief":turn_belief, 
+            "turn_belief":turn_belief,
+            "turn_ontology": turn_ontology,
             "gating_label":gating_label, 
             "context":context, 
             "context_plain":context_plain, 
@@ -209,7 +212,7 @@ def collate_fn(data):
     item_info["y_lengths"] = y_lengths
     return item_info
 
-def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity, training, max_line = None):
+def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity, training, ontology,max_line = None):
     print(("Reading from {}".format(file_name)))
     data = []
     max_resp_len, max_value_len = 0, 0
@@ -274,6 +277,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                         turn_belief_dict = OrderedDict([(k, v) for k, v in turn_belief_dict.items() if args["only_domain"] in k])
 
                 turn_belief_list = [str(k)+'-'+str(v) for k, v in turn_belief_dict.items()]
+                turn_belief_ontology_list = [ontology["-".join(tb.rsplit("-")[:2])] for tb in turn_belief_list]
 
                 if (args["all_vocab"] or dataset=="train") and training:
                     mem_lang.index_words(turn_belief_dict, 'belief')
@@ -305,6 +309,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                     "turn_id":turn_id, 
                     "dialog_history":source_text, 
                     "turn_belief":turn_belief_list,
+                    "turn_ontology": turn_belief_ontology_list,
                     "gating_label":gating_label, 
                     "turn_uttr":turn_uttr_strip, 
                     'generate_y':generate_y
@@ -393,6 +398,12 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
     # load domain-slot pairs from ontology
     ontology = json.load(open("data/multi-woz/MULTIWOZ2 2/ontology.json", 'r'))
     ALL_SLOTS = get_slot_information(ontology)
+    space_handle = {}
+    for k in ontology:
+        if " " in k and "book" not in k:
+            space_handle[k.replace(" ", "").lower()] = k
+    for k in space_handle:
+        ontology[k] = ontology[space_handle[k]]
     gating_dict = {"ptr":0, "dontcare":1, "none":2}
     # Vocabulary
     lang, mem_lang = Lang(), Lang()
@@ -402,12 +413,12 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
     mem_lang_name = 'mem-lang-all.pkl' if args["all_vocab"] else 'mem-lang-train.pkl'
 
     if training:
-        pair_train, train_max_len, slot_train = read_langs(file_train, gating_dict, ALL_SLOTS, "train", lang, mem_lang, sequicity, training)
+        pair_train, train_max_len, slot_train = read_langs(file_train, gating_dict, ALL_SLOTS, "train", lang, mem_lang, sequicity, training, ontology)
         train = get_seq(pair_train, lang, mem_lang, batch_size, True, sequicity)
         nb_train_vocab = lang.n_words
-        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training)
+        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training, ontology)
         dev   = get_seq(pair_dev, lang, mem_lang, eval_batch, False, sequicity)
-        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, sequicity, training)
+        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, sequicity, training, ontology)
         test  = get_seq(pair_test, lang, mem_lang, eval_batch, False, sequicity)
         if os.path.exists(folder_name+lang_name) and os.path.exists(folder_name+mem_lang_name):
             print("[Info] Loading saved lang files...")
@@ -431,14 +442,14 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
             mem_lang = pickle.load(handle)
 
         pair_train, train_max_len, slot_train, train, nb_train_vocab = [], 0, {}, [], 0
-        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training)
+        pair_dev, dev_max_len, slot_dev = read_langs(file_dev, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training, ontology)
         dev   = get_seq(pair_dev, lang, mem_lang, eval_batch, False, sequicity)
-        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, sequicity, training)
+        pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, sequicity, training, ontology)
         test  = get_seq(pair_test, lang, mem_lang, eval_batch, False, sequicity)
 
     test_4d = []
     if args['except_domain']!="":
-        pair_test_4d, _, _ = read_langs(file_test, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training)
+        pair_test_4d, _, _ = read_langs(file_test, gating_dict, ALL_SLOTS, "dev", lang, mem_lang, sequicity, training, ontology)
         test_4d  = get_seq(pair_test_4d, lang, mem_lang, eval_batch, False, sequicity)
 
     max_word = max(train_max_len, dev_max_len, test_max_len) + 1
