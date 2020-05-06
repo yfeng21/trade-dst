@@ -23,8 +23,8 @@ import editdistance
 from typing import List
 
 def find_closest(pred_val: List[str], ontology: List[str]):
-    _ont = [o.split() for o in ontology]
-    dists = [editdistance.eval(pred_val, o) for o in _ont]
+    # _ont = [o.split() for o in ontology]
+    dists = [editdistance.eval(pred_val, o) for o in ontology]
     closest_idx = dists.index(min(dists))
     return ontology[closest_idx]
 
@@ -173,9 +173,9 @@ class TRADE(nn.Module):
                 turn_ontology = data_dev["turn_ontology"][bi]
                 # pointer-generator results
                 if args["use_gate"]:
-                    print(len(gate))
-                    print(len(turn_ontology))
-                    print(len(turn_ontology))
+                    # print(len(gate))
+                    # print(len(turn_ontology))
+                    # print(len(turn_ontology))
                     for si, sg in enumerate(gate):
                         if sg==self.gating_dict["none"]:
                             continue
@@ -189,10 +189,10 @@ class TRADE(nn.Module):
                             if st == "none":
                                 continue
                             else:
-                                if args['use_ont']:
+                                if args['use_ont'] and si in [19,20,22]:
                                     # print('using ontology', flush=True)
                                     # print(turn_ontology)
-                                    st = find_closest(st.split(), turn_ontology[si])
+                                    st = find_closest(st, turn_ontology[si])
                                 predict_belief_bsz_ptr.append(slot_temp[si]+"-"+str(st))
                         else:
                             predict_belief_bsz_ptr.append(slot_temp[si]+"-"+inverse_unpoint_slot[sg.item()])
