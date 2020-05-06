@@ -404,8 +404,10 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
             space_handle[k.replace(" ", "").lower()] = k
     for k in space_handle:
         ontology[k] = ontology[space_handle[k]]
-
-    ALL_SLOTS_ontology_list = [ontology[tb] for tb in ALL_SLOTS]
+    ALL_SLOTS_ontology_list = []
+    for tb in ALL_SLOTS:
+        cleaned_val = [i for i in ontology[tb] if i != 'do n\'t care']
+        ALL_SLOTS_ontology_list.append(cleaned_val)
     gating_dict = {"ptr":0, "dontcare":1, "none":2}
     # Vocabulary
     lang, mem_lang = Lang(), Lang()
