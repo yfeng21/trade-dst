@@ -65,6 +65,7 @@ class Dataset(data.Dataset):
         self.turn_domain = data_info['turn_domain']
         self.turn_id = data_info['turn_id']
         self.dialog_history = data_info['dialog_history']
+        self.dialog_history_list = data_info["dialog_history_list"]
         self.turn_belief = data_info['turn_belief']
         self.turn_ontology = data_info["turn_ontology"]
         self.gating_label = data_info['gating_label']
@@ -87,7 +88,8 @@ class Dataset(data.Dataset):
         turn_domain = self.preprocess_domain(self.turn_domain[index])
         generate_y = self.generate_y[index]
         generate_y = self.preprocess_slot(generate_y, self.trg_word2id)
-        context = self.dialog_history[index] 
+        context = self.dialog_history[index]
+        dialog_history_list = self.dialog_history_list[index]
         context = self.preprocess(context, self.src_word2id)
         context_plain = self.dialog_history[index]
         
@@ -98,7 +100,8 @@ class Dataset(data.Dataset):
             "turn_ontology": turn_ontology,
             "gating_label":gating_label, 
             "context":context, 
-            "context_plain":context_plain, 
+            "context_plain":context_plain,
+            "dialog_history_list":dialog_history_list,
             "turn_uttr_plain":turn_uttr, 
             "turn_domain":turn_domain, 
             "generate_y":generate_y, 
@@ -233,6 +236,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
         cnt_lin = 1
         for dial_dict in dials:
             dialog_history = ""
+            dialog_history_list = []
             last_belief_dict = {}
             # Filtering and counting domains
             for domain in dial_dict["domains"]:
@@ -256,6 +260,7 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                 turn_uttr = turn["system_transcript"] + " ; " + turn["transcript"]
                 turn_uttr_strip = turn_uttr.strip()
                 dialog_history +=  (turn["system_transcript"] + " ; " + turn["transcript"] + " ; ")
+                dialog_history_list.append(turn_uttr_strip)
                 source_text = dialog_history.strip()
                 turn_belief_dict = fix_general_label_error(turn["belief_state"], False, SLOTS)
 
@@ -307,7 +312,8 @@ def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity
                     "domains":dial_dict["domains"], 
                     "turn_domain":turn_domain,
                     "turn_id":turn_id, 
-                    "dialog_history":source_text, 
+                    "dialog_history":source_text,
+                    "dialog_history_list":dialog_history_list,
                     "turn_belief":turn_belief_list,
                     "turn_ontology": turn_belief_ontology_list,
                     "gating_label":gating_label, 
