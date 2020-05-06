@@ -19,10 +19,12 @@ from tqdm import tqdm
 import os
 import pickle
 from random import shuffle
-
+from transformers import BertTokenizer
 from .fix_label import *
 
 EXPERIMENT_DOMAINS = ["hotel", "train", "restaurant", "attraction", "taxi"]
+
+tokenizer = BertTokenizer.from_pretrained('bert-based-uncased')
 
 class Lang:
     def __init__(self):
@@ -76,7 +78,20 @@ class Dataset(data.Dataset):
         self.src_word2id = src_word2id
         self.trg_word2id = trg_word2id
         self.mem_word2id = mem_word2id
-    
+
+    def preprocess_for_bert(self, sequence_list):
+        story_list = []
+        for sequence in sequence_list:
+            # story = [word2idx[word] if word in word2idx else UNK_token for word in sequence.split()]
+            # story = torch.Tensor(story)
+            story = tokenizer.encode(sequence)
+            story_list.append(torch.tensor(story))
+        lengths = [len(x) for x in story_list]
+        story_list = nn.utils.rnn.pad_sequence(story_list, batch_first=True, padding_value=0)  # L_d * 768
+        max_len = story_list.size(1)
+        mask = torch.tensor([[1 if i < lengths[u] else 0 for i in range(max_len)] for u in range(len(lengths))])
+        return story_list, mask
+
     def __getitem__(self, index):
         """Returns one data pair (source and target)."""
         ID = self.ID[index]
@@ -92,6 +107,8 @@ class Dataset(data.Dataset):
         dialog_history_list = self.dialog_history_list[index]
         context = self.preprocess(context, self.src_word2id)
         context_plain = self.dialog_history[index]
+
+        bert_ctx, bert_mask = self.preprocess_for_bert(self.dialog_history_list[index])
         
         item_info = {
             "ID":ID, 
@@ -104,7 +121,9 @@ class Dataset(data.Dataset):
             "dialog_history_list":dialog_history_list,
             "turn_uttr_plain":turn_uttr, 
             "turn_domain":turn_domain, 
-            "generate_y":generate_y, 
+            "generate_y":generate_y,
+            "bert_context": bert_ctx,
+            "bert_mask": bert_mask,
             }
         return item_info
 
@@ -143,6 +162,8 @@ class Dataset(data.Dataset):
         domains = {"attraction":0, "restaurant":1, "taxi":2, "train":3, "hotel":4, "hospital":5, "bus":6, "police":7}
         return domains[turn_domain]
 
+def iter_cuda(xx):
+    return [x.cuda() for x in xx]
 
 def collate_fn(data):
     def merge(sequences):
@@ -213,6 +234,8 @@ def collate_fn(data):
     item_info["turn_domain"] = turn_domain
     item_info["generate_y"] = y_seqs
     item_info["y_lengths"] = y_lengths
+    item_info["bert_context"] = iter_cuda(item_info["bert_context"])
+    item_info["bert_mask"] = iter_cuda(item_info["bert_mask"])
     return item_info
 
 def read_langs(file_name, gating_dict, SLOTS, dataset, lang, mem_lang, sequicity, training, ALL_SLOTS_ontology_list,max_line = None):

@@ -140,15 +140,18 @@ class TRADE(nn.Module):
             story = data['context']
 
         # Encode dialog history
-        encoded_outputs, encoded_hidden = self.encoder(story.transpose(0, 1), data['context_len'])
+        encoded_outputs, encoded_hidden, bert_out = self.encoder(
+            story.transpose(0, 1), data['context_len'],
+            bert_context=data['bert_context'], bert_mask=data['bert_mask']
+        )
 
         # Get the words that can be copy from the memory
         batch_size = len(data['context_len'])
         self.copy_list = data['context_plain']
         max_res_len = data['generate_y'].size(2) if self.encoder.training else 10
-        all_point_outputs, all_gate_outputs, words_point_out, words_class_out = self.decoder.forward(batch_size, \
+        all_point_outputs, all_gate_outputs, words_point_out, words_class_out = self.decoder(batch_size, \
             encoded_hidden, encoded_outputs, data['context_len'], story, max_res_len, data['generate_y'], \
-            use_teacher_forcing, slot_temp)
+            use_teacher_forcing, slot_temp, bert_out=bert_out)
         return all_point_outputs, all_gate_outputs, words_point_out, words_class_out
 
     def evaluate(self, dev, matric_best, slot_temp, early_stop=None):
@@ -221,7 +224,7 @@ class TRADE(nn.Module):
         joint_acc_score_ptr, F1_score_ptr, turn_acc_score_ptr = self.evaluate_metrics(all_prediction, "pred_bs_ptr", slot_temp)
 
         evaluation_metrics = {"Joint Acc":joint_acc_score_ptr, "Turn Acc":turn_acc_score_ptr, "Joint F1":F1_score_ptr}
-        print(evaluation_metrics)
+        print(evaluation_metrics, flush=True)
 
         # Set back to training mode
         self.encoder.train(True)
@@ -313,6 +316,7 @@ class EncoderRNN(nn.Module):
         self.embedding = nn.Embedding(vocab_size, hidden_size, padding_idx=PAD_token)
         self.embedding.weight.data.normal_(0, 0.1)
         self.gru = nn.GRU(hidden_size, hidden_size, n_layers, dropout=dropout, bidirectional=True)
+        self.gru2 = nn.GRU(768, 768, 1, dropout=dropout, bidirectional=False)
         # self.domain_W = nn.Linear(hidden_size, nb_domain)
 
         if args["load_embedding"]:
@@ -333,8 +337,26 @@ class EncoderRNN(nn.Module):
         else:
             return Variable(torch.zeros(2, bsz, self.hidden_size))
 
-    def forward(self, input_seqs, input_lengths, hidden=None):
+    def forward(self, input_seqs, input_lengths, hidden=None, bert_context=None, bert_mask=None):
         # Note: we run this all at once (over multiple batches of multiple sequences)
+        bert_lengths = []
+        bert_embedded = []
+        for dialogue_history, mask in zip(bert_context, bert_mask):
+            with torch.no_grad():
+                hiddens = self.bert(input_ids=dialogue_history, attention_mask=mask)[0]
+            hiddens = hiddens[mask.bool()]
+            bert_lengths.append(len(hiddens))
+            bert_embedded.append(hiddens)
+
+        bert_embedded = nn.utils.rnn.pad_sequence(bert_embedded)
+        bert_lengths = torch.tensor(bert_lengths)
+
+        bert_embedded = nn.utils.rnn.pack_padded_sequence(bert_embedded, bert_lengths, batch_first=False,
+                                                          enforce_sorted=False)
+        bert_embedded = self.dropout_layer(bert_embedded)
+        brnn_outputs, brnn_hidden = self.gru2(bert_embedded)
+        brnn_outputs, _ = nn.utils.rnn.pad_packed_sequence(brnn_outputs, batch_first=False)
+
         embedded = self.embedding(input_seqs)
         embedded = self.dropout_layer(embedded)
         hidden = self.get_state(input_seqs.size(1))
@@ -345,7 +367,7 @@ class EncoderRNN(nn.Module):
            outputs, _ = nn.utils.rnn.pad_packed_sequence(outputs, batch_first=False)
         hidden = hidden[0] + hidden[1]
         outputs = outputs[:,:,:self.hidden_size] + outputs[:,:,self.hidden_size:]
-        return outputs.transpose(0,1), hidden.unsqueeze(0)
+        return outputs.transpose(0,1), hidden.unsqueeze(0), (brnn_outputs, brnn_hidden, bert_lengths)
 
 
 class Generator(nn.Module):
@@ -364,6 +386,7 @@ class Generator(nn.Module):
         self.slots = slots
 
         self.W_gate = nn.Linear(hidden_size, nb_gate)
+        self.bilinear_gate = nn.Bilinear(768, hidden_size, nb_gate)
 
         # Create independent slot embeddings
         self.slot_w2i = {}
@@ -375,7 +398,9 @@ class Generator(nn.Module):
         self.Slot_emb = nn.Embedding(len(self.slot_w2i), hidden_size)
         self.Slot_emb.weight.data.normal_(0, 0.1)
 
-    def forward(self, batch_size, encoded_hidden, encoded_outputs, encoded_lens, story, max_res_len, target_batches, use_teacher_forcing, slot_temp):
+    def forward(self, batch_size, encoded_hidden, encoded_outputs, encoded_lens, story, max_res_len, target_batches,
+                use_teacher_forcing, slot_temp, bert_out=None):
+        brnn_outputs, brnn_hidden, bert_lengths = bert_out
         all_point_outputs = torch.zeros(len(slot_temp), batch_size, max_res_len, self.vocab_size)
         all_gate_outputs = torch.zeros(len(slot_temp), batch_size, self.nb_gate)
         if USE_CUDA:
@@ -407,6 +432,8 @@ class Generator(nn.Module):
             else:
                 slot_emb_arr = torch.cat((slot_emb_arr, slot_emb_exp), dim=0)
 
+        all_gate_outputs = self.bilinear_gate(brnn_hidden.expand(len(slot_temp), -1, -1), slot_emb_arr)
+
         if args["parallel_decode"]:
             # Compute pointer-generator output, puting all (domain, slot) in one batch
             decoder_input = self.dropout_layer(slot_emb_arr).view(-1, self.hidden_size) # (batch*|slot|) * emb
@@ -421,8 +448,8 @@ class Generator(nn.Module):
                 enc_len = encoded_lens * len(slot_temp)
                 context_vec, logits, prob = self.attend(enc_out, hidden.squeeze(0), enc_len)
 
-                if wi == 0:
-                    all_gate_outputs = torch.reshape(self.W_gate(context_vec), all_gate_outputs.size())
+                # if wi == 0:
+                #     all_gate_outputs = torch.reshape(self.W_gate(context_vec), all_gate_outputs.size())
 
                 p_vocab = self.attend_vocab(self.embedding.weight, hidden.squeeze(0))
                 p_gen_vec = torch.cat([dec_state.squeeze(0), context_vec, decoder_input], -1)
@@ -460,8 +487,8 @@ class Generator(nn.Module):
                 for wi in range(max_res_len):
                     dec_state, hidden = self.gru(decoder_input.expand_as(hidden), hidden)
                     context_vec, logits, prob = self.attend(encoded_outputs, hidden.squeeze(0), encoded_lens)
-                    if wi == 0:
-                        all_gate_outputs[counter] = self.W_gate(context_vec)
+                    # if wi == 0:
+                    #     all_gate_outputs[counter] = self.W_gate(context_vec)
                     p_vocab = self.attend_vocab(self.embedding.weight, hidden.squeeze(0))
                     p_gen_vec = torch.cat([dec_state.squeeze(0), context_vec, decoder_input], -1)
                     vocab_pointer_switches = self.sigmoid(self.W_ratio(p_gen_vec))
