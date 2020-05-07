@@ -17,29 +17,36 @@ if args['dataset']=='multiwoz':
     from utils.utils_multiWOZ_DST import *
 else:
     print("You need to provide the --dataset information")
+result_dict = {}
+for only in ["all","hotel", "train", "restaurant", "attraction", "taxi"]:
+    if only != "all":
+        args["only_domain"] = only
+    train, dev, test, test_special, lang, SLOTS_LIST, gating_dict, max_word = prepare_data_seq(False, args['task'], False, batch_size=BSZ)
 
-train, dev, test, test_special, lang, SLOTS_LIST, gating_dict, max_word = prepare_data_seq(False, args['task'], False, batch_size=BSZ)
+    model = globals()[decoder](
+        int(HDD), 
+        lang=lang, 
+        path=args['path'], 
+        task=args["task"], 
+        lr=0, 
+        dropout=0,
+        slots=SLOTS_LIST,
+        gating_dict=gating_dict,
+        nb_train_vocab=max_word)
 
-model = globals()[decoder](
-    int(HDD), 
-    lang=lang, 
-    path=args['path'], 
-    task=args["task"], 
-    lr=0, 
-    dropout=0,
-    slots=SLOTS_LIST,
-    gating_dict=gating_dict,
-    nb_train_vocab=max_word)
+    if args["run_dev_testing"]:
+        print("Development Set ...")
+        acc_dev = model.evaluate(dev, 1e7, SLOTS_LIST[2]) 
 
-if args["run_dev_testing"]:
-    print("Development Set ...")
-    acc_dev = model.evaluate(dev, 1e7, SLOTS_LIST[2]) 
+    if args['except_domain']!="" and args["run_except_4d"]:
+        print("Test Set on 4 domains...")
+        acc_test_4d = model.evaluate(test_special, 1e7, SLOTS_LIST[2]) 
 
-if args['except_domain']!="" and args["run_except_4d"]:
-    print("Test Set on 4 domains...")
-    acc_test_4d = model.evaluate(test_special, 1e7, SLOTS_LIST[2]) 
-
-print("Test Set ...")
-acc_test = model.evaluate(test, 1e7, SLOTS_LIST[3]) 
-
+    print("Test Set ...")
+    acc_test = model.evaluate(test, 1e7, SLOTS_LIST[3]) 
+    result_dict[only] = acc_test
+for only in result_dict:
+    print(only)
+    acc_test = result_dict[only]
+    print("{:.2f} {:.2f}".format(acc_test["Joint Acc"]*100,acc_test["Turn Acc"]*100))
 

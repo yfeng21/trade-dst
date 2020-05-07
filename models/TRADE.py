@@ -297,13 +297,13 @@ class TRADE(nn.Module):
             if (F1_score >= matric_best):
                 self.save_model('ENTF1-{:.4f}'.format(F1_score))
                 print("MODEL SAVED")
-            return F1_score
+            #return F1_score
         else:
             if (joint_acc_score >= matric_best):
                 self.save_model('ACC-{:.4f}'.format(joint_acc_score))
                 print("MODEL SAVED")
-            return joint_acc_score
-
+            #return joint_acc_score
+        return evaluation_metrics
     def evaluate_metrics(self, all_prediction, from_which, slot_temp):
         total, turn_acc, joint_acc, F1_pred, F1_count = 0, 0, 0, 0, 0
         for d, v in all_prediction.items():
