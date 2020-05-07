@@ -21,6 +21,7 @@ from utils.config import *
 import pprint
 import editdistance
 from typing import List
+from transformers import BertModel
 
 def find_closest(pred_val: List[str], ontology: List[str]):
     # _ont = [o.split() for o in ontology]
@@ -61,7 +62,9 @@ class TRADE(nn.Module):
             self.decoder.load_state_dict(trained_decoder.state_dict())
 
         # Initialize optimizers and criterion
-        self.optimizer = optim.Adam(self.parameters(), lr=lr)
+        non_bert_params = [v for k, v in self.named_parameters() if 'bert' not in k]
+        bert_emb_params = list(self.encoder.bert.embeddings.parameters())
+        self.optimizer = optim.Adam(non_bert_params + bert_emb_params, lr=lr)
         self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor=0.5, patience=1, min_lr=0.0001, verbose=True)
 
         self.reset()
@@ -176,9 +179,6 @@ class TRADE(nn.Module):
                 turn_ontology = data_dev["turn_ontology"][bi]
                 # pointer-generator results
                 if args["use_gate"]:
-                    # print(len(gate))
-                    # print(len(turn_ontology))
-                    # print(len(turn_ontology))
                     for si, sg in enumerate(gate):
                         if sg==self.gating_dict["none"]:
                             continue
@@ -192,10 +192,10 @@ class TRADE(nn.Module):
                             if st == "none":
                                 continue
                             else:
-                                if args['use_ont'] and si in [19,20,22]:
+                                # if args['use_ont'] and si in [19,20,22]:
                                     # print('using ontology', flush=True)
                                     # print(turn_ontology)
-                                    st = find_closest(st, turn_ontology[si])
+                                    # st = find_closest(st, turn_ontology[si ])
                                 predict_belief_bsz_ptr.append(slot_temp[si]+"-"+str(st))
                         else:
                             predict_belief_bsz_ptr.append(slot_temp[si]+"-"+inverse_unpoint_slot[sg.item()])
@@ -317,6 +317,7 @@ class EncoderRNN(nn.Module):
         self.embedding.weight.data.normal_(0, 0.1)
         self.gru = nn.GRU(hidden_size, hidden_size, n_layers, dropout=dropout, bidirectional=True)
         self.gru2 = nn.GRU(768, 768, 1, dropout=dropout, bidirectional=False)
+        self.bert = BertModel.from_pretrained('bert-base-uncased')
         # self.domain_W = nn.Linear(hidden_size, nb_domain)
 
         if args["load_embedding"]:
@@ -342,18 +343,18 @@ class EncoderRNN(nn.Module):
         bert_lengths = []
         bert_embedded = []
         for dialogue_history, mask in zip(bert_context, bert_mask):
-            with torch.no_grad():
-                hiddens = self.bert(input_ids=dialogue_history, attention_mask=mask)[0]
+            # with torch.no_grad():
+            hiddens = self.bert(input_ids=dialogue_history, attention_mask=mask)[0]
             hiddens = hiddens[mask.bool()]
             bert_lengths.append(len(hiddens))
             bert_embedded.append(hiddens)
 
         bert_embedded = nn.utils.rnn.pad_sequence(bert_embedded)
         bert_lengths = torch.tensor(bert_lengths)
+        bert_embedded = self.dropout_layer(bert_embedded)
 
         bert_embedded = nn.utils.rnn.pack_padded_sequence(bert_embedded, bert_lengths, batch_first=False,
                                                           enforce_sorted=False)
-        bert_embedded = self.dropout_layer(bert_embedded)
         brnn_outputs, brnn_hidden = self.gru2(bert_embedded)
         brnn_outputs, _ = nn.utils.rnn.pad_packed_sequence(brnn_outputs, batch_first=False)
 
@@ -432,7 +433,9 @@ class Generator(nn.Module):
             else:
                 slot_emb_arr = torch.cat((slot_emb_arr, slot_emb_exp), dim=0)
 
-        all_gate_outputs = self.bilinear_gate(brnn_hidden.expand(len(slot_temp), -1, -1), slot_emb_arr)
+        # brnn_pooled = brnn_hidden
+        brnn_pooled = brnn_outputs.mean(0)
+        all_gate_outputs = self.bilinear_gate(brnn_pooled.expand(len(slot_temp), -1, -1).contiguous(), slot_emb_arr)
 
         if args["parallel_decode"]:
             # Compute pointer-generator output, puting all (domain, slot) in one batch

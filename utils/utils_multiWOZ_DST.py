@@ -24,7 +24,7 @@ from .fix_label import *
 
 EXPERIMENT_DOMAINS = ["hotel", "train", "restaurant", "attraction", "taxi"]
 
-tokenizer = BertTokenizer.from_pretrained('bert-based-uncased')
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
 class Lang:
     def __init__(self):
