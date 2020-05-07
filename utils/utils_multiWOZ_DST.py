@@ -17,7 +17,7 @@ from collections import OrderedDict
 from embeddings import GloveEmbedding, KazumaCharEmbedding
 from tqdm import tqdm
 import os
-import pickle
+import pickle as pkl
 from random import shuffle
 
 from .fix_label import *
@@ -88,7 +88,6 @@ class Dataset(data.Dataset):
         context = self.dialog_history[index] 
         context = self.preprocess(context, self.src_word2id)
         context_plain = self.dialog_history[index]
-        
         item_info = {
             "ID":ID, 
             "turn_id":turn_id, 
@@ -393,6 +392,9 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
     # load domain-slot pairs from ontology
     ontology = json.load(open("data/multi-woz/MULTIWOZ2 2/ontology.json", 'r'))
     ALL_SLOTS = get_slot_information(ontology)
+    with open("all_slots.pkl", "wb") as f:
+        pkl.dump(ALL_SLOTS, f) 
+    import pdb;pdb.set_trace()
     gating_dict = {"ptr":0, "dontcare":1, "none":2}
     # Vocabulary
     lang, mem_lang = Lang(), Lang()
@@ -435,6 +437,9 @@ def prepare_data_seq(training, task="dst", sequicity=0, batch_size=100):
         dev   = get_seq(pair_dev, lang, mem_lang, eval_batch, False, sequicity)
         pair_test, test_max_len, slot_test = read_langs(file_test, gating_dict, ALL_SLOTS, "test", lang, mem_lang, sequicity, training)
         test  = get_seq(pair_test, lang, mem_lang, eval_batch, False, sequicity)
+        
+        pair_train, train_max_len, slot_train = read_langs(file_train, gating_dict, ALL_SLOTS, "train", lang, mem_lang, sequicity, training)
+        train  = get_seq(pair_train, lang, mem_lang, eval_batch, False, sequicity)
 
     test_4d = []
     if args['except_domain']!="":

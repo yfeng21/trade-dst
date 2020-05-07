@@ -130,7 +130,6 @@ class TRADE(nn.Module):
             story = data['context'] * rand_mask.long()
         else:
             story = data['context']
-
         # Encode dialog history
         encoded_outputs, encoded_hidden = self.encoder(story.transpose(0, 1), data['context_len'])
 
@@ -195,14 +194,13 @@ class TRADE(nn.Module):
                             predict_belief_bsz_ptr.append(slot_temp[si]+"-"+str(st))
 
                 all_prediction[data_dev["ID"][bi]][data_dev["turn_id"][bi]]["pred_bs_ptr"] = predict_belief_bsz_ptr
-
+                all_prediction[data_dev["ID"][bi]][data_dev["turn_id"][bi]]["turn_uttr_plain"] = data_dev["turn_uttr_plain"][bi]
                 if set(data_dev["turn_belief"][bi]) != set(predict_belief_bsz_ptr) and args["genSample"]:
                     print("True", set(data_dev["turn_belief"][bi]) )
                     print("Pred", set(predict_belief_bsz_ptr), "\n")  
 
         if args["genSample"]:
             json.dump(all_prediction, open("all_prediction_{}.json".format(self.name), 'w'), indent=4)
-
         joint_acc_score_ptr, F1_score_ptr, turn_acc_score_ptr = self.evaluate_metrics(all_prediction, "pred_bs_ptr", slot_temp)
 
         evaluation_metrics = {"Joint Acc":joint_acc_score_ptr, "Turn Acc":turn_acc_score_ptr, "Joint F1":F1_score_ptr}

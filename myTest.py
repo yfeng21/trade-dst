@@ -5,14 +5,16 @@ from models.TRADE import *
 python3 myTest.py -ds= -path= -bsz=
 '''
 
+args["only_domain"] = "restaurant"
+args["genSample"] = True
 directory = args['path'].split("/")
 HDD = directory[2].split('HDD')[1].split('BSZ')[0]
 decoder = directory[1].split('-')[0] 
 BSZ = int(args['batch']) if args['batch'] else int(directory[2].split('BSZ')[1].split('DR')[0])
 args["decoder"] = decoder
 args["HDD"] = HDD
-print("HDD", HDD, "decoder", decoder, "BSZ", BSZ)
 
+print("HDD", HDD, "decoder", decoder, "BSZ", BSZ)
 if args['dataset']=='multiwoz':
     from utils.utils_multiWOZ_DST import *
 else:
@@ -34,12 +36,12 @@ model = globals()[decoder](
 if args["run_dev_testing"]:
     print("Development Set ...")
     acc_dev = model.evaluate(dev, 1e7, SLOTS_LIST[2]) 
-
 if args['except_domain']!="" and args["run_except_4d"]:
     print("Test Set on 4 domains...")
     acc_test_4d = model.evaluate(test_special, 1e7, SLOTS_LIST[2]) 
 
 print("Test Set ...")
-acc_test = model.evaluate(test, 1e7, SLOTS_LIST[3]) 
+#acc_test = model.evaluate(test, 1e7, SLOTS_LIST[3]) 
+acc_test = model.evaluate(train, 1e7, SLOTS_LIST[3]) 
 
 

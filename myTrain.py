@@ -8,6 +8,7 @@ from models.TRADE import *
 python myTrain.py -dec= -bsz= -hdd= -dr= -lr=
 '''
 
+args["only_domain"] = "restaurant"
 early_stop = args['earlyStop']
 
 if args['dataset']=='multiwoz':
