@@ -64,7 +64,8 @@ class TRADE(nn.Module):
         # Initialize optimizers and criterion
         non_bert_params = [v for k, v in self.named_parameters() if 'bert' not in k]
         bert_emb_params = list(self.encoder.bert.embeddings.parameters())
-        self.optimizer = optim.Adam(non_bert_params + bert_emb_params, lr=lr)
+        self.optimizer = optim.Adam(non_bert_params, lr=lr)
+        self.boptimizer = optim.AdamW(bert_emb_params, lr=3e-5)
         self.scheduler = lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='max', factor=0.5, patience=1, min_lr=0.0001, verbose=True)
 
         self.reset()
@@ -95,6 +96,7 @@ class TRADE(nn.Module):
         if reset: self.reset()
         # Zero gradients of both optimizers
         self.optimizer.zero_grad()
+        self.boptimizer.zero_grad()
 
         # Encode and Decode
         use_teacher_forcing = random.random() < args["teacher_forcing_ratio"]
@@ -123,6 +125,7 @@ class TRADE(nn.Module):
         self.loss_grad.backward()
         clip_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), clip)
         self.optimizer.step()
+        self.boptimizer.step()
 
     def optimize_GEM(self, clip):
         clip_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), clip)
@@ -168,7 +171,8 @@ class TRADE(nn.Module):
         for j, data_dev in pbar:
             # Encode and Decode
             batch_size = len(data_dev['context_len'])
-            _, gates, words, class_words = self.encode_and_decode(data_dev, False, slot_temp)
+            with torch.no_grad():
+                _, gates, words, class_words = self.encode_and_decode(data_dev, False, slot_temp)
 
             for bi in range(batch_size):
                 if data_dev["ID"][bi] not in all_prediction.keys():

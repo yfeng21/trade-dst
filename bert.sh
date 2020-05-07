@@ -8,4 +8,4 @@
 #SBATCH --gres=gpu:1 # Use 1 GPUs
 #SBATCH -p gpu
 
-python myTrain.py -dec=TRADE -bsz=16 -dr=0.2 -lr=0.001 -le=1 --addName bertmean -eb=32
+python myTrain.py -dec=TRADE -bsz=16 -dr=0.2 -lr=0.001 -le=1 --addName bertmean -eb=64

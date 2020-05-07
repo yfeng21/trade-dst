@@ -48,7 +48,7 @@ for epoch in range(200):
 
     if((epoch+1) % int(args['evalp']) == 0):
         
-        acc = model.evaluate(dev, avg_best, SLOTS_LIST[2], early_stop)
+        acc = model.evaluate(test, avg_best, SLOTS_LIST[2], early_stop)
         model.scheduler.step(acc)
 
         if(acc >= avg_best):
