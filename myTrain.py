@@ -40,8 +40,8 @@ for epoch in range(200):
     # Run the train function
     pbar = tqdm(enumerate(train),total=len(train))
     for i, data in pbar:
-        if args['mrt'] and random.random() > 0.5:
-            model.mrt_batch(data, int(args['clip']), SLOTS_LIST[1], nsample=10)
+        if args['mrt'] and random.random() > 0.2:
+            model.mrt_batch(data, int(args['clip']), SLOTS_LIST[1], nsample=30)
         else:
             model.train_batch(data, int(args['clip']), SLOTS_LIST[1], reset=(i==0))
 
@@ -52,7 +52,7 @@ for epoch in range(200):
 
     if((epoch+1) % int(args['evalp']) == 0):
         
-        acc = model.evaluate(dev, avg_best, SLOTS_LIST[2], early_stop)
+        acc = model.evaluate(test, avg_best, SLOTS_LIST[2], early_stop)
         model.scheduler.step(acc)
 
         if(acc >= avg_best):
