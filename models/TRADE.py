@@ -21,6 +21,7 @@ from utils.config import *
 import pprint
 import editdistance
 from typing import List
+from itertools import takewhile
 
 def find_closest(pred_val: List[str], ontology: List[str]):
     # _ont = [o.split() for o in ontology]
@@ -74,9 +75,11 @@ class TRADE(nn.Module):
         print_loss_ptr = self.loss_ptr / self.print_every
         print_loss_gate = self.loss_gate / self.print_every
         print_loss_class = self.loss_class / self.print_every
+        print_loss_mrt = self.mrt_loss / self.print_every
         # print_loss_domain = self.loss_domain / self.print_every
         self.print_every += 1
-        return 'L:{:.2f},LP:{:.2f},LG:{:.2f}'.format(print_loss_avg,print_loss_ptr,print_loss_gate)
+        return 'L:{:.2f},LP:{:.2f},LG:{:.2f},MRT:{:.2f}'.format(
+            print_loss_avg,print_loss_ptr,print_loss_gate, print_loss_mrt)
 
     def save_model(self, dec_type):
         directory = 'save/TRADE-'+args["addName"]+args['dataset']+str(self.task)+'/'+'HDD'+str(self.hidden_size)+'BSZ'+str(args['batch'])+'DR'+str(self.dropout)+str(dec_type)
@@ -87,6 +90,42 @@ class TRADE(nn.Module):
 
     def reset(self):
         self.loss, self.print_every, self.loss_ptr, self.loss_gate, self.loss_class = 0, 1, 0, 0, 0
+        self.mrt_loss = 0
+
+        self.ntr, self.nmrt = 0, 0
+
+    def mrt_batch(self, data, clip, slot_temp, reset=0, nsample=10):
+        if reset: self.reset()
+        # Zero gradients of both optimizers
+        self.optimizer.zero_grad()
+
+        # only name
+        name_slots_ids = [19, 20, 22]
+        slot_temp = [slot_temp[i] for i in name_slots_ids]
+
+        sampled_logits, sampled_words = self.encode_and_sample(data, False, slot_temp, nsample=nsample)
+        sampled_logits = 1e-3 * sampled_logits
+        sampled_prob = torch.softmax(sampled_logits, -1)  # SLT * B * SP
+
+        # sampled word: S * (B * SP) * L
+        bsz = len(data['context_len'])
+        n_slots = len(slot_temp)
+        dists =[[[] for i in range(bsz)] for j in range(n_slots)]
+        print(sampled_words)
+        exit()
+        for i in range(n_slots):
+            for j in range(bsz):
+                for k in range(nsample):
+                    sampled = sampled_words[i][j*nsample + k]
+                    dists[i][j].append(editdistance.eval(
+                        data['generate_y_raw'][j][name_slots_ids[i]].split(),
+                        list(takewhile(lambda x: x != 'EOS',sampled)))
+                    )
+        dists = torch.tensor(dists).cuda()
+        loss = (dists * sampled_prob).mean()
+
+        loss.backward()
+        self.mrt_loss += loss.data
 
     def train_batch(self, data, clip, slot_temp, reset=0):
         if reset: self.reset()
@@ -108,7 +147,7 @@ class TRADE(nn.Module):
         else:
             loss = loss_ptr
 
-        self.loss_grad = loss
+        loss.backward()
         self.loss_ptr_to_bp = loss_ptr
 
         # Update parameters with optimizers
@@ -117,7 +156,7 @@ class TRADE(nn.Module):
         self.loss_gate += loss_gate.item()
 
     def optimize(self, clip):
-        self.loss_grad.backward()
+        # self.loss_grad.backward()
         clip_norm = torch.nn.utils.clip_grad_norm_(self.parameters(), clip)
         self.optimizer.step()
 
@@ -150,6 +189,32 @@ class TRADE(nn.Module):
             encoded_hidden, encoded_outputs, data['context_len'], story, max_res_len, data['generate_y'], \
             use_teacher_forcing, slot_temp)
         return all_point_outputs, all_gate_outputs, words_point_out, words_class_out
+
+    def encode_and_sample(self, data, use_teacher_forcing, slot_temp, nsample=10):
+        # Build unknown mask for memory to encourage generalization
+        if args['unk_mask'] and self.decoder.training:
+            story_size = data['context'].size()
+            rand_mask = np.ones(story_size)
+            bi_mask = np.random.binomial([np.ones((story_size[0],story_size[1]))], 1-self.dropout)[0]
+            rand_mask = rand_mask * bi_mask
+            rand_mask = torch.Tensor(rand_mask)
+            if USE_CUDA:
+                rand_mask = rand_mask.cuda()
+            story = data['context'] * rand_mask.long()
+        else:
+            story = data['context']
+
+        # Encode dialog history
+        encoded_outputs, encoded_hidden = self.encoder(story.transpose(0, 1), data['context_len'])
+
+        # Get the words that can be copy from the memory
+        batch_size = len(data['context_len'])
+        self.copy_list = data['context_plain']
+        max_res_len = 10  # data['generate_y'].size(2) if self.encoder.training else 10
+        logits, words = self.decoder.sample(batch_size, \
+            encoded_hidden, encoded_outputs, data['context_len'], story, max_res_len, data['generate_y'], \
+            use_teacher_forcing, slot_temp, nsample=nsample)
+        return logits.view(len(slot_temp), batch_size, -1), words
 
     def evaluate(self, dev, matric_best, slot_temp, early_stop=None):
         # Set to not-training mode to disable dropout
@@ -482,6 +547,75 @@ class Generator(nn.Module):
                 words_point_out.append(words)
 
         return all_point_outputs, all_gate_outputs, words_point_out, []
+
+    def sample(self, batch_size, encoded_hidden, encoded_outputs, encoded_lens, story, max_res_len, target_batches,
+                use_teacher_forcing, slot_temp, nsample=-1):
+        # Get the slot embedding
+        slot_emb_dict = {}
+        for i, slot in enumerate(slot_temp):
+            # Domain embbeding
+            if slot.split("-")[0] in self.slot_w2i.keys():
+                domain_w2idx = [self.slot_w2i[slot.split("-")[0]]]
+                domain_w2idx = torch.tensor(domain_w2idx)
+                if USE_CUDA: domain_w2idx = domain_w2idx.cuda()
+                domain_emb = self.Slot_emb(domain_w2idx)
+            # Slot embbeding
+            if slot.split("-")[1] in self.slot_w2i.keys():
+                slot_w2idx = [self.slot_w2i[slot.split("-")[1]]]
+                slot_w2idx = torch.tensor(slot_w2idx)
+                if USE_CUDA: slot_w2idx = slot_w2idx.cuda()
+                slot_emb = self.Slot_emb(slot_w2idx)
+
+            # Combine two embeddings as one query
+            combined_emb = domain_emb + slot_emb
+            slot_emb_dict[slot] = combined_emb
+
+        words_point_out = []
+        all_logits = []
+        counter = 0
+        if nsample > 0:
+            orig_batch_size = batch_size
+            batch_size = nsample * batch_size
+            encoded_outputs = torch.repeat_interleave(encoded_outputs, nsample, dim=0)
+            encoded_hidden = torch.repeat_interleave(encoded_hidden, nsample, dim=1)
+            encoded_lens = sum([[x for _ in range(nsample)] for x in encoded_lens], [])
+            story = torch.repeat_interleave(story, nsample, dim=0)
+        for slot in slot_temp:
+            hidden = encoded_hidden
+            words = []
+            slot_emb = slot_emb_dict[slot]
+            decoder_input = self.dropout_layer(slot_emb).expand(batch_size, self.hidden_size)
+            prob_mask = torch.ones(batch_size).cuda()
+            sampling_logits = torch.zeros(batch_size).cuda()
+            for wi in range(max_res_len):
+                dec_state, hidden = self.gru(decoder_input.expand_as(hidden), hidden)
+                context_vec, logits, prob = self.attend(encoded_outputs, hidden.squeeze(0), encoded_lens)
+                p_vocab = self.attend_vocab(self.embedding.weight, hidden.squeeze(0))
+                p_gen_vec = torch.cat([dec_state.squeeze(0), context_vec, decoder_input], -1)
+                vocab_pointer_switches = self.sigmoid(self.W_ratio(p_gen_vec))
+                p_context_ptr = torch.zeros(p_vocab.size())
+                if USE_CUDA: p_context_ptr = p_context_ptr.cuda()
+                p_context_ptr.scatter_add_(1, story, prob)
+                final_p_vocab = (1 - vocab_pointer_switches).expand_as(p_context_ptr) * p_context_ptr + \
+                                vocab_pointer_switches.expand_as(p_context_ptr) * p_vocab
+                sampled_word = torch.multinomial(final_p_vocab, num_samples=1)
+                sampled_logits = torch.log(torch.gather(final_p_vocab, 1, sampled_word)).view(-1)
+                sampled_word = sampled_word.view(-1)
+                step_word_pred = [self.lang.index2word[w_idx] for w_idx in sampled_word.cpu().tolist()]
+                for i, w in enumerate(step_word_pred):
+                    if w == "EOS": prob_mask[i] = 0
+                prob_mask = prob_mask.clone()
+                sampling_logits = sampled_logits + sampling_logits
+                words.append(step_word_pred)
+                decoder_input = self.embedding(sampled_word)
+                if USE_CUDA: decoder_input = decoder_input.cuda()
+            counter += 1
+            words = list(map(list, zip(*words)))
+            words_point_out.append(words)  # S * (B * SP) * L
+            all_logits.append(sampling_logits)
+        all_logits = torch.stack(all_logits, dim=0)  # S * (B * SP)
+        # print(all_logits.shape)
+        return all_logits, words_point_out
 
     def attend(self, seq, cond, lens):
         """
