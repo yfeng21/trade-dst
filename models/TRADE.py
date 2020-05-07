@@ -111,8 +111,6 @@ class TRADE(nn.Module):
         bsz = len(data['context_len'])
         n_slots = len(slot_temp)
         dists =[[[] for i in range(bsz)] for j in range(n_slots)]
-        print(sampled_words)
-        exit()
         for i in range(n_slots):
             for j in range(bsz):
                 for k in range(nsample):
