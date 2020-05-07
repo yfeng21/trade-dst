@@ -78,7 +78,7 @@ class TRADE(nn.Module):
         print_loss_mrt = self.mrt_loss / self.print_every
         # print_loss_domain = self.loss_domain / self.print_every
         self.print_every += 1
-        return 'L:{:.2f},LP:{:.2f},LG:{:.2f},MRT:{:.2f}'.format(
+        return 'L:{:.2f},LP:{:.2f},LG:{:.2f},MRT:{:.5f}'.format(
             print_loss_avg,print_loss_ptr,print_loss_gate, print_loss_mrt)
 
     def save_model(self, dec_type):
@@ -116,8 +116,8 @@ class TRADE(nn.Module):
                 for k in range(nsample):
                     sampled = sampled_words[i][j*nsample + k]
                     dists[i][j].append(editdistance.eval(
-                        data['generate_y_raw'][j][name_slots_ids[i]].split(),
-                        list(takewhile(lambda x: x != 'EOS',sampled)))
+                        data['generate_y_raw'][j][name_slots_ids[i]],
+                        ' '.join(list(takewhile(lambda x: x != 'EOS',sampled))))
                     )
         dists = torch.tensor(dists).cuda()
         loss = (dists * sampled_prob).mean()
@@ -284,7 +284,7 @@ class TRADE(nn.Module):
         joint_acc_score_ptr, F1_score_ptr, turn_acc_score_ptr = self.evaluate_metrics(all_prediction, "pred_bs_ptr", slot_temp)
 
         evaluation_metrics = {"Joint Acc":joint_acc_score_ptr, "Turn Acc":turn_acc_score_ptr, "Joint F1":F1_score_ptr}
-        print(evaluation_metrics)
+        print(evaluation_metrics, flush=True)
 
         # Set back to training mode
         self.encoder.train(True)
