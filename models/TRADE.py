@@ -435,6 +435,7 @@ class Generator(nn.Module):
 
         # brnn_pooled = brnn_hidden
         brnn_pooled = brnn_outputs.mean(0)
+        # brnn_pooled = brnn_outputs.max(0)[0]
         all_gate_outputs = self.bilinear_gate(brnn_pooled.expand(len(slot_temp), -1, -1).contiguous(), slot_emb_arr)
 
         if args["parallel_decode"]:
